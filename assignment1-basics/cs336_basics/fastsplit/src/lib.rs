@@ -5,8 +5,7 @@ use std::collections::HashMap;
 
 // Token pattern (look-around removed for speed).
 static TOKEN_RE: Lazy<Regex> = Lazy::new(|| {
-    // Regex::new(r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+")
-    Regex::new(r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+\z|\s+")
+    Regex::new(r"'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+")
         .expect("valid regex")
 });
 
@@ -101,8 +100,42 @@ fn collect_tokens(segment: &str, out: &mut Vec<String>) {
     if segment.is_empty() {
         return;
     }
+
+    // remember how many tokens were there before we started
+    let start_len = out.len();
+
     for m in TOKEN_RE.find_iter(segment) {
         out.push(m.as_str().to_owned());
+    }
+
+    // Post-process last whitespace token (original regexp has extra \s+(?!\S) part)
+    // Post-process the tokens we just appended
+    let mut i = start_len;
+    while i < out.len() {
+        let is_last = i == out.len() - 1;
+        let tok = &out[i];
+
+        // If it's a whitespace run (>1 scalar) AND not the very last token,
+        // split off the last scalar.
+        if !is_last && tok.chars().all(char::is_whitespace) && tok.chars().count() > 1 {
+            // Take ownership so we can mutate the vec safely
+            let whole = out.remove(i);
+
+            // find byte index of the last char
+            let split_byte = whole.char_indices().rev().next().unwrap().0;
+
+            let head = whole[..split_byte].to_owned();
+            let tail = whole[split_byte..].to_owned();
+
+            // insert back head and tail at position i
+            out.insert(i, head);
+            out.insert(i + 1, tail);
+
+            // advance past both new pieces
+            i += 2;
+        } else {
+            i += 1;
+        }
     }
 }
 
