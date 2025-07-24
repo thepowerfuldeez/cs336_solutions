@@ -93,8 +93,10 @@ def pre_tokenize(
 
 if __name__ == "__main__":
     splitter = Splitter("<|endoftext|>")
-    filepath = "data/TinyStoriesV2-GPT4-train.txt"
+    # filepath = "tests/fixtures/tinystories_sample_5M.txt"
+    # filepath = "data/TinyStoriesV2-GPT4-train.txt"
+    filepath = "data/TinyStoriesV2-GPT4-mid3.txt"
     t0 = time.monotonic()
-    pre_token_counts = pre_tokenize(splitter, filepath, num_processes=8)
+    pre_token_counts = pre_tokenize(splitter, filepath, num_processes=1)
     t1 = time.monotonic()
     print(f"Took {t1 - t0:.2f}s.")

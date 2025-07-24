@@ -7,8 +7,9 @@ from pathlib import Path
 from collections import defaultdict
 
 import regex as re
+from tqdm.auto import tqdm
 
-from cs336_basics.pretokenization import Splitter, pre_tokenize
+from cs336_basics.pretokenization import Splitter, pre_tokenize, find_chunk_boundaries
 
 # logging.basicConfig(level=os.getenv("LOGLEVEL", logging.INFO), filename="data.log", filemode="w")
 logging.basicConfig(level=os.getenv("LOGLEVEL", logging.INFO))
@@ -190,10 +191,8 @@ class BPE:
 
         tx1 = time.monotonic()
         self.sort_time += tx1 - tx
-        if (tx1 - tx) > 0.01:
-            logger.info(f"sort time is too long, took {tx1 - tx:.02f} s.")
         new_id = self.cur_vocab_size
-        logger.info(f"max freq is {all_counts[max_key]=}, max_key={self.decode(max_key)}")
+        # logger.info(f"max freq is {all_counts[max_key]=}, max_key={self.decode(max_key)}")
 
         affected_pre_tokens: set[tuple[bytes]] = set()
         for (left, right), keys in pair_to_pre_tokens.items():
@@ -271,7 +270,7 @@ class BPE:
         if (tx1 - tx) > 0.01:
             logger.info(f"sort time is too long, took {tx1 - tx:.02f} s.")
         new_id = self.cur_vocab_size
-        logger.info(f"max freq is {all_counts[max_key]=}, {max_key=}, max_key={self.decode(max_key)}")
+        # logger.info(f"max freq is {all_counts[max_key]=}, {max_key=}, max_key={self.decode(max_key)}")
 
         new_pre_token_byte_counts = pre_token_byte_counts.copy()
 
@@ -282,8 +281,6 @@ class BPE:
                 v = new_pre_token_byte_counts.pop(k)
                 # counts are not changed, we just need to re-write with a new key
                 new_pre_token_byte_counts[new_k] = v
-                if len(new_k) == 1:
-                    logger.info(f"len of new k is now 1: {new_k}, {v=}")
 
         return (
             (max_key, new_id),
@@ -313,12 +310,7 @@ class BPE:
     def train(self, filepath: str, num_processes: int = 1):
         logger.info("Starting to train BPE")
         t0 = time.monotonic()
-        # pre_token_counts = pre_tokenize(self.splitter, str(filepath), num_processes=num_processes)
-
-        pre_token_counts = defaultdict(int)
-        for doc in re.split("<|endoftext|>", Path(filepath).read_text(), concurrent=True):
-            for w in re.finditer(PAT, doc):
-                pre_token_counts[w.group()] += 1
+        pre_token_counts = pre_tokenize(self.splitter, str(filepath), num_processes=num_processes)
 
         t1 = time.monotonic()
         logger.info(f"Pre-tokenization finished in {t1 - t0:.1f} s.")
@@ -343,6 +335,7 @@ class BPE:
 
         # cached, more efficient version
         updated_keys, all_counts, pair_to_pre_tokens = None, None, None
+        bar = tqdm(total=n_iters, desc="Training BPE")
         for i in range(n_iters):
             (
                 (updated_key, new_id),
@@ -362,13 +355,14 @@ class BPE:
             converted = (self.convert(updated_key[0]), self.convert(updated_key[1]))
             self.merges_tuples.append(converted)
             self.vocab[new_id] = v
-            logger.info(f"iter: {i}, updated new id mapping with {new_id=}, {v=}")
+            # logger.info(f"iter: {i}, updated new id mapping with {new_id=}, {v=}")
 
             updated_keys, all_counts, pair_to_pre_tokens = (
                 new_updated_keys,
                 all_counts_updated,
                 pair_to_pre_tokens_updated,
             )
+            bar.update()
         t2 = time.monotonic()
         logger.info(f"Finished training in {t2 - t0:.1f} s.\nAverage iter time: {(t1 - t0) / n_iters:.5f} s.")
         logger.info(f"Total sort time was {self.sort_time:.2f} s.")
@@ -392,18 +386,19 @@ class BPE:
 
 
 if __name__ == "__main__":
+    filepath = "data/owt_train.txt"
     # filepath = "data/TinyStoriesV2-GPT4-train.txt"
     # filepath = "data/TinyStoriesV2-GPT4-mid3.txt"
     # filepath = "data/TinyStoriesV2-GPT4-valid.txt"
     # filepath = "cs336_basics/test.txt"
-    filepath = "tests/fixtures/tinystories_sample_5M.txt"
-    # bpe = BPE(["<|endoftext|>"], vocab_size=32000)
-    bpe = BPE(["<|endoftext|>"], vocab_size=1000)
-    vocab, merges = bpe.train(filepath, num_processes=1)
+    # filepath = "tests/fixtures/tinystories_sample_5M.txt"
+    bpe = BPE(["<|endoftext|>"], vocab_size=32000)
+    # bpe = BPE(["<|endoftext|>"], vocab_size=10000)
+    vocab, merges = bpe.train(filepath, num_processes=8)
     # took 4276s on M1 Pro
     logger.info([bpe.decode(x) for x in list(vocab)[256:356]])
     toks = bpe.encode("newest is a newest")
     logger.info(toks)
     logger.info([bpe.decode(tok) for tok in toks])
 
-    bpe.save("vocab.pickle", "merges.pickle")
+    bpe.save("vocab_owt.pickle", "merges_owt.pickle")
