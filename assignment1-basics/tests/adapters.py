@@ -10,8 +10,7 @@ import torch
 from torch import Tensor
 
 
-
-from cs336_basics.bpe1 import BPE
+from cs336_basics.bpe import BPE
 
 def run_linear(
     d_in: int,
