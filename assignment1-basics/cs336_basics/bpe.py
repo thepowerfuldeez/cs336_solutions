@@ -29,6 +29,7 @@ class BPE:
         self.special_tokens_bytes = [x.encode() for x in special_tokens]
 
         self.splitter = Splitter("<|endoftext|>")
+        self.split_re = "(" + "|".join([re.escape(tok) for tok in self.special_tokens]) + ")"
 
         self.vocab: dict[int, bytes] = {256 + i: special_tok for i, special_tok in enumerate(self.special_tokens_bytes)}
         self.new_id_to_bytes: dict[int, int | bytes] = self.vocab.copy()
@@ -89,25 +90,44 @@ class BPE:
         We do that in a while loop and replace initial bytestring with bytes from mapping
         """
         if isinstance(entry, list) or isinstance(entry, tuple):
-            return "".join([self.convert(e).decode("utf-8", errors="ignore") for e in entry])
-        return self.convert(entry).decode("utf-8", errors="ignore")
+            return "".join([self.convert(e).decode("utf-8", errors="replace") for e in entry])
+        return self.convert(entry).decode("utf-8", errors="replace")
 
     def encode(self, inp: str) -> list[int | bytes]:
         """
         Iteratively apply merges from self.merges to convert a string (sequence of bytes)
         into an encoded sequence
         """
-        splitted_by_doc = re.split("|".join([re.escape(tok) for tok in self.special_tokens]), inp)
+        splitted_by_doc = re.split(self.split_re, inp)
         res = []
         for doc in splitted_by_doc:
+            if doc in self.special_tokens:
+                res.append(256 + self.special_tokens.index(doc))
+                continue
             for tok in PAT.finditer(doc, concurrent=True):
                 key = list(tok.group().encode())
-                for new_id, (a1, a2) in enumerate(self.merges, 256 + len(self.special_tokens)):
-                    key, _ = self.merge_key(a1, a2, key, new_id)
+                for new_id, (left, right) in enumerate(self.merges, 256 + len(self.special_tokens)):
+                    key, _ = self.merge_key(left, right, key, new_id)
+                    if len(key) == 1:
+                        break
                 res.extend(key)
             # if add_special_tokens
             # res.append(256)
         return res
+    
+    def encode_file(self, inp: str | Path) -> list[int | bytes]:
+        file_path = Path(inp)
+        chunk_size_in_bytes = 1024 * 1024 * 32
+        n_chunks = math.ceil(file_path.stat().st_size / chunk_size_in_bytes)
+        with Path(inp).open("rb") as f:
+            boundaries = find_chunk_boundaries(f, n_chunks, " ".encode())
+            f.seek(0)
+            tokens = []
+            for start, end in zip(boundaries[:-1], boundaries[1:]):
+                f.seek(start)
+                chunk: str = f.read(end-start).decode('utf-8')
+                tokens.extend(self.encode(chunk))
+        return tokens
 
     def update_counts(
         self,
