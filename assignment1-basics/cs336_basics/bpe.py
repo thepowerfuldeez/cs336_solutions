@@ -114,7 +114,7 @@ class BPE:
             # if add_special_tokens
             # res.append(256)
         return res
-    
+
     def encode_file(self, inp: str | Path) -> list[int | bytes]:
         file_path = Path(inp)
         chunk_size_in_bytes = 1024 * 1024 * 32
@@ -125,7 +125,7 @@ class BPE:
             tokens = []
             for start, end in zip(boundaries[:-1], boundaries[1:]):
                 f.seek(start)
-                chunk: str = f.read(end-start).decode('utf-8')
+                chunk: str = f.read(end - start).decode("utf-8")
                 tokens.extend(self.encode(chunk))
         return tokens
 
@@ -157,7 +157,8 @@ class BPE:
         updated_keys=None,
         all_counts=None,
         pair_to_pre_tokens=None,
-    ) -> tuple[tuple[tuple[bytes], int], dict, set, dict, dict]:
+        all_updated_pairs=None,
+    ) -> tuple[tuple[tuple[bytes], int], dict, set, dict, dict, set]:
         """
         More efficient implementation of iter_merge, that works 4x faster on 1000 iters (1.7s vs 6.3s)
 
@@ -174,18 +175,17 @@ class BPE:
         5. Subtract count from every pair in a key that gets updated, and keep pair_to_pre_tokens updated
         At next iteration, only required keys will be updated and all of their pairs will be used
         """
-        all_updated_pairs = set()
         if pair_to_pre_tokens is None:
             # pair -> count
             pair_to_pre_tokens = {}
-            all_counts: dict[tuple[bytes], int] = self.update_counts(pre_token_byte_counts, pair_to_pre_tokens)
-            all_updated_pairs |= set(all_counts.keys())
+            all_counts: dict[tuple[bytes | int], int] = self.update_counts(pre_token_byte_counts, pair_to_pre_tokens)
+            all_updated_pairs = set(all_counts.keys())
         else:
-            # all_counts, pair_to_pre_tokens, pre_tokens_to_pairs are restored from args
+            # all_counts, pair_to_pre_tokens, pre_tokens_to_pairs, all_updated_pairs are restored from args
             all_counts = self.update_counts(
                 {k: pre_token_byte_counts[k] for k in updated_keys}, pair_to_pre_tokens, all_counts=all_counts
             )
-        all_updated_pairs |= set(all_counts.keys())
+            # all_updated_pairs = set(all_counts)
 
         # identify the most frequent pair
         tx = time.monotonic()
@@ -201,12 +201,15 @@ class BPE:
                 key=lambda x: x[1],
                 reverse=True,
             )
-            self.second_best_key = sorted_subset[1:]
+            # logger.info(f"sorted {len(sorted_subset)} counts")
+            self.second_best_key = sorted_subset
             max_key = self.break_ties(sorted_subset)
         else:
             sorted_all_counts = sorted(all_counts.items(), key=lambda x: x[1], reverse=True)
+            # logger.info(f"sorted {len(sorted_all_counts)} counts")
             count_to_keep = math.ceil(len(sorted_all_counts) * 0.10)
-            self.second_best_key = sorted_all_counts[1 : 1 + count_to_keep]
+            # self.second_best_key = sorted_all_counts[1 : 1 + count_to_keep]
+            self.second_best_key = sorted_all_counts[:count_to_keep]
             max_key = self.break_ties(sorted_all_counts)
 
         tx1 = time.monotonic()
@@ -229,11 +232,12 @@ class BPE:
 
         all_counts_updated = all_counts.copy()
         pair_to_pre_tokens_updated = pair_to_pre_tokens.copy()
+        all_updated_pairs_updated = set()
 
         left, right = max_key
         for k in affected_pre_tokens:
-            new_k, is_updated = self.merge_key(left, right, k, new_id)
-            if is_updated:
+            new_k, updated_indices = self.merge_key(left, right, k, new_id)
+            if updated_indices:
                 v = new_pre_token_byte_counts.pop(k)
                 for pair in zip(k[:-1], k[1:]):
                     all_counts_updated[tuple(pair)] -= v
@@ -242,8 +246,13 @@ class BPE:
 
                 # counts are not changed, we just need to re-write with a new key
                 new_pre_token_byte_counts[new_k] = v
-
                 new_updated_keys.add(new_k)
+
+                for j in updated_indices:
+                    if j > 0:
+                        all_updated_pairs_updated.add((new_k[j - 1], new_k[j]))
+                    if j < len(new_k) - 1:
+                        all_updated_pairs_updated.add((new_k[j], new_k[j + 1]))
 
         return (
             (max_key, new_id),
@@ -251,6 +260,7 @@ class BPE:
             new_updated_keys,
             {k: v for k, v in all_counts_updated.items() if v > 0},
             pair_to_pre_tokens_updated,
+            all_updated_pairs_updated,
         )
 
     def iter_merge(
@@ -307,7 +317,7 @@ class BPE:
             new_pre_token_byte_counts,
         )
 
-    def merge_key(self, a1: int | bytes, a2: int | bytes, k: tuple, new_id: int) -> tuple[tuple[bytes], bool]:
+    def merge_key(self, left: int | bytes, right: int | bytes, k: tuple, new_id: int) -> tuple[tuple[bytes], list]:
         """
         Merges a pair of int | bytes into a key and returns a new key
         Example: a1, a2 = (111, 257)
@@ -318,14 +328,16 @@ class BPE:
         """
         new_k = list(k)
         i = 0
-        updated: bool = False
+        # updated indices in the modified key
+        updated_indices: list[int] = []
+
         while i < len(new_k) - 1:
-            if new_k[i] == a1 and new_k[i + 1] == a2:
+            if new_k[i] == left and new_k[i + 1] == right:
                 new_k[i] = new_id
                 new_k = new_k[: i + 1] + new_k[i + 2 :]
-                updated = True
+                updated_indices.append(i)
             i += 1
-        return tuple(new_k), updated
+        return tuple(new_k), updated_indices
 
     def train(self, filepath: str, num_processes: int = 1):
         logger.info("Starting to train BPE")
@@ -354,7 +366,7 @@ class BPE:
         #     logger.info(f"iter: {i}, updated new id mapping with {new_id=}, {v=}")
 
         # cached, more efficient version
-        updated_keys, all_counts, pair_to_pre_tokens = None, None, None
+        updated_keys, all_counts, pair_to_pre_tokens, all_updated_pairs = None, None, None, None
         bar = tqdm(total=n_iters, desc="Training BPE")
         for i in range(n_iters):
             (
@@ -363,24 +375,24 @@ class BPE:
                 new_updated_keys,
                 all_counts_updated,
                 pair_to_pre_tokens_updated,
+                all_updated_pairs_updated,
             ) = self.iter_merge_cached(
-                self.pre_token_byte_counts,
-                updated_keys,
-                all_counts,
-                pair_to_pre_tokens,
+                self.pre_token_byte_counts, updated_keys, all_counts, pair_to_pre_tokens, all_updated_pairs
             )
             self.new_id_to_bytes[new_id] = updated_key
             v = self.convert(new_id)
             self.merges.append(updated_key)
             converted = (self.convert(updated_key[0]), self.convert(updated_key[1]))
+            # logger.info(f"merges at step {i}: {converted}")
             self.merges_tuples.append(converted)
             self.vocab[new_id] = v
             # logger.info(f"iter: {i}, updated new id mapping with {new_id=}, {v=}")
 
-            updated_keys, all_counts, pair_to_pre_tokens = (
+            updated_keys, all_counts, pair_to_pre_tokens, all_updated_pairs = (
                 new_updated_keys,
                 all_counts_updated,
                 pair_to_pre_tokens_updated,
+                all_updated_pairs_updated,
             )
             bar.update()
         t2 = time.monotonic()
@@ -414,6 +426,7 @@ if __name__ == "__main__":
     # filepath = "tests/fixtures/tinystories_sample_5M.txt"
     bpe = BPE(["<|endoftext|>"], vocab_size=32000)
     # bpe = BPE(["<|endoftext|>"], vocab_size=10000)
+    # bpe = BPE(["<|endoftext|>"], vocab_size=1000)
     vocab, merges = bpe.train(filepath, num_processes=8)
     # took 4276s on M1 Pro
     logger.info([bpe.decode(x) for x in list(vocab)[256:356]])
