@@ -11,7 +11,6 @@ from tqdm.auto import tqdm
 
 from cs336_basics.pretokenization import Splitter, pre_tokenize, find_chunk_boundaries
 
-# logging.basicConfig(level=os.getenv("LOGLEVEL", logging.INFO), filename="data.log", filemode="w")
 logging.basicConfig(level=os.getenv("LOGLEVEL", logging.INFO))
 logger = logging.getLogger(__name__)
 
@@ -111,8 +110,6 @@ class BPE:
                     if len(key) == 1:
                         break
                 res.extend(key)
-            # if add_special_tokens
-            # res.append(256)
         return res
 
     def encode_file(self, inp: str | Path) -> list[int | bytes]:
@@ -185,7 +182,6 @@ class BPE:
             all_counts = self.update_counts(
                 {k: pre_token_byte_counts[k] for k in updated_keys}, pair_to_pre_tokens, all_counts=all_counts
             )
-            # all_updated_pairs = set(all_counts)
 
         # identify the most frequent pair
         tx = time.monotonic()
@@ -201,14 +197,13 @@ class BPE:
                 key=lambda x: x[1],
                 reverse=True,
             )
-            # logger.info(f"sorted {len(sorted_subset)} counts")
             self.second_best_key = sorted_subset
             max_key = self.break_ties(sorted_subset)
         else:
             sorted_all_counts = sorted(all_counts.items(), key=lambda x: x[1], reverse=True)
-            # logger.info(f"sorted {len(sorted_all_counts)} counts")
+            # We keep top10% of current iteration and re-use only that in next iter during sorting 
+            # This shaves time dramatically
             count_to_keep = math.ceil(len(sorted_all_counts) * 0.10)
-            # self.second_best_key = sorted_all_counts[1 : 1 + count_to_keep]
             self.second_best_key = sorted_all_counts[:count_to_keep]
             max_key = self.break_ties(sorted_all_counts)
 
@@ -221,12 +216,7 @@ class BPE:
         for (left, right), keys in pair_to_pre_tokens.items():
             if left in max_key and right in max_key:
                 affected_pre_tokens.update(keys)
-        # logger.debug(
-        #     f"narrow down the search from {len(pre_token_byte_counts)} pre-tokens to {len(affected_pre_tokens)}"
-        # )
-        # logger.debug(f"{affected_pre_tokens=}")
 
-        # new_pre_token_byte_counts = {k: v for k, v in pre_token_byte_counts.items() if k not in affected_pre_tokens}
         new_pre_token_byte_counts = pre_token_byte_counts.copy()
         new_updated_keys: set[tuple[bytes]] = set()
 
@@ -300,7 +290,6 @@ class BPE:
         if (tx1 - tx) > 0.01:
             logger.info(f"sort time is too long, took {tx1 - tx:.02f} s.")
         new_id = self.cur_vocab_size
-        # logger.info(f"max freq is {all_counts[max_key]=}, {max_key=}, max_key={self.decode(max_key)}")
 
         new_pre_token_byte_counts = pre_token_byte_counts.copy()
 
@@ -352,9 +341,8 @@ class BPE:
 
         n_iters = max(0, self.vocab_size - self.cur_vocab_size)
         logger.info(f"Using {n_iters=}")
-        # logger.debug(f"pre token counts are {self.pre_token_byte_counts}")
-        # tok1, tok2
 
+        # Non-efficient implementation
         # for i in range(n_iters):
         #     (updated_key, new_id), self.pre_token_byte_counts = self.iter_merge(self.pre_token_byte_counts)
         #     self.new_id_to_bytes[new_id] = updated_key
@@ -401,20 +389,8 @@ class BPE:
         return self.vocab, self.merges_tuples
 
     def save(self, vocab_path: str, merges_path: str):
-        # vocab_serialized: dict[int, bytes] = {k: v for k, v in self.vocab.items()}
-        # merges_serialized: list[tuple[bytes, bytes]] = [(left.decode(), right.decode()) for left, right in self.merges_tuples]
         Path(vocab_path).write_bytes(pickle.dumps(self.vocab))
         Path(merges_path).write_bytes(pickle.dumps(self.merges_tuples))
-
-
-# if __name__ == "__main__":
-#     with Path("../data/TinyStoriesV2-GPT4-train.txt").open() as inp, Path("../data/TinyStoriesV2-GPT4-mid3.txt").open("w") as out:
-#         i = 0
-#         for line in inp:
-#             if i > 4560000:
-#                 break
-#             out.write(line)
-#             i += 1
 
 
 if __name__ == "__main__":
@@ -428,7 +404,7 @@ if __name__ == "__main__":
     # bpe = BPE(["<|endoftext|>"], vocab_size=10000)
     # bpe = BPE(["<|endoftext|>"], vocab_size=1000)
     vocab, merges = bpe.train(filepath, num_processes=8)
-    # took 4276s on M1 Pro
+
     logger.info([bpe.decode(x) for x in list(vocab)[256:356]])
     toks = bpe.encode("newest is a newest")
     logger.info(toks)
