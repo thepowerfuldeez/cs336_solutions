@@ -1,6 +1,7 @@
 import numpy
 import torch
 import torch.nn.functional as F
+from torch.nn.utils.clip_grad import clip_grad_norm_
 
 from .adapters import run_cross_entropy, run_gradient_clipping, run_softmax
 
@@ -68,7 +69,7 @@ def test_gradient_clipping():
 
     loss = torch.cat(t1).sum()
     loss.backward()
-    torch.nn.utils.clip_grad.clip_grad_norm_(t1, max_norm)
+    clip_grad_norm_(t1, max_norm)
     t1_grads = [torch.clone(t.grad) for t in t1 if t.grad is not None]
 
     t1_c = tuple(torch.nn.Parameter(torch.clone(t)) for t in tensors)

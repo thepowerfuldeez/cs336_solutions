@@ -299,21 +299,25 @@ if __name__ == "__main__":
     tokenized_path = Path("data_tokenized")
     tokenized_path.mkdir(exist_ok=True, parents=True)
 
-    for fname in ["TinyStoriesV2-GPT4-valid.txt", "TinyStoriesV2-GPT4-train.txt"]:
+    # for fname in ["TinyStoriesV2-GPT4-valid.txt", "TinyStoriesV2-GPT4-train.txt"]:
+    #     t0 = time.monotonic()
+    #     tokens = tok.encode_file(input_dir / fname, chunk_size=8 * 1024 * 1024)
+    #     taken = time.monotonic() - t0
+    #     logger.info(f"Took {taken:.1f} s.")
+    #     logger.info(f"Throughput: {22 / taken:.2f} MB/s")
+    #     np.save(str((tokenized_path / fname).with_suffix(".npy")), np.array(tokens, dtype="uint16"))
+
+
+    tok = Tokenizer.from_files(
+        "/Users/george/Projects/learning/assignment1-basics/vocab_owt.pickle",
+        "/Users/george/Projects/learning/assignment1-basics/merges_owt.pickle",
+        special_tokens=["<|endoftext|>"],
+    )
+    for fname in ["owt_valid.txt", "owt_train.txt"]:
         t0 = time.monotonic()
-        tokens = tok.encode_file(input_dir / fname, chunk_size=8 * 1024 * 1024)
+        fpath = input_dir / fname
+        tokens = tok.encode_file(fpath, chunk_size=8 * 1024 * 1024)
         taken = time.monotonic() - t0
         logger.info(f"Took {taken:.1f} s.")
-        logger.info(f"Throughput: {22 / taken:.2f} MB/s")
+        logger.info(f"Throughput: {fpath.stat().st_size / (1024 * 1024) / taken:.2f} MB/s")
         np.save(str((tokenized_path / fname).with_suffix(".npy")), np.array(tokens, dtype="uint16"))
-        # with (input_dir / fname).open() as f:
-        #     tokenized_samples = []
-        #     bar = tqdm(desc="Tokens processed: ")
-        #     last_time = time.monotonic()
-        #     for tok in tok.encode_iterable(f):
-        #         # speed = len(tokenized_line) / (time.monotonic() - last_time)
-        #         # bar.set_description(f"Throughput: {speed:.2f} tok/s")
-        #         bar.update()
-        #         last_time = time.monotonic()
-        #         tokenized_samples.append(tok)
-        #     bar.close()

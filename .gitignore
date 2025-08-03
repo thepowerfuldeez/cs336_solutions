@@ -2,3 +2,4 @@
 **/.DS_Store
 **/fastsplit/target
 *.egg-info*
+**/data_tokenized
