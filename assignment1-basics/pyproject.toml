@@ -24,6 +24,7 @@ dependencies = [
     "pathos>=0.3.4",
     "py-spy>=0.4.0",
     "maturin>=1.9.1",
+    "line-profiler>=5.0.0",
 ]
 
 
