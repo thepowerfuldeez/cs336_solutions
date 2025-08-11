@@ -11,11 +11,11 @@ def train(cfg: Config):
     logger.info(f"Training run: {run_name}")
 
     cfg.optim.cosine_steps = cfg.trainer.max_steps
-    trainer = Trainer(cfg)
-    # wandb.init(project=cfg.project, name=run_name, config=dataclass_to_nested_dict(cfg))
+    run = wandb.init(project=cfg.project, name=run_name, config=dataclass_to_nested_dict(cfg))
+    trainer = Trainer(cfg, wandb=run)
     trainer.train()
 
-    # wandb.finish()
+    run.finish()
 
 
 def test(cfg: Config):

@@ -3,3 +3,5 @@
 **/fastsplit/target
 *.egg-info*
 **/data_tokenized
+wandb/
+checkpoints/

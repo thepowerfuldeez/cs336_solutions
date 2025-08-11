@@ -1,10 +1,12 @@
 from pathlib import Path
-from typing import Iterator
+from collections.abc import Iterator
 
 import torch
 import numpy as np
 from jaxtyping import Int
 from torch import Tensor
+
+from cs336_basics.utils.logger import logger
 
 
 class MemoryMappedDataset:
@@ -20,6 +22,7 @@ class MemoryMappedDataset:
         else:
             self.ds = np.load(path_or_ds, mmap_mode="r")
         self.total_length = self.ds.shape[0]
+        logger.info(f"Dataset length: {self.total_length}")
         self.context_length = context_length
         self.device = device
         if seed is not None:
@@ -46,7 +49,7 @@ class MemoryMappedDataset:
         Return an iterator of batches in a sequential order
         Last batch is dropped
         """
-        sequential_indices = torch.arange(start=0, end=len(self), step=batch_size)
+        sequential_indices = torch.arange(start=0, end=len(self), step=batch_size * self.context_length)
         for i_start in sequential_indices:
             batch_inputs = torch.empty((batch_size, self.context_length), device=self.device, dtype=torch.int32)
             batch_targets = torch.empty((batch_size, self.context_length), device=self.device, dtype=torch.int32)

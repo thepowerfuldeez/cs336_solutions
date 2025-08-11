@@ -1,10 +1,10 @@
-from cs336_basics.config_schema import Config, ModelConfig
+from cs336_basics.config_schema import Config, ModelConfig, DataConfig, TrainerConfig
 from cs336_basics.configs.base import cfg as base
 
 cfg = Config(
-    data=base.data,
-    model=ModelConfig(d_model=768, n_layers=12, n_heads=12),
+    data=DataConfig(base.data.train_path, base.data.validation_path, batch_size=160, val_batch_size=512, context_length=256),
+    model=ModelConfig(d_model=512, d_ff=1344, n_layers=4, n_heads=16),
     optim=base.optim,
-    trainer=base.trainer,
+    trainer=TrainerConfig(log_every=50, save_every=1000, val_every=1000, max_steps=8000),
     project=base.project,
 )

@@ -6,8 +6,9 @@ from pathlib import Path
 @dataclass(frozen=True)
 class DataConfig:
     train_path: str | Path
-    validation_path: str
+    validation_path: str | Path
     batch_size: int = 1
+    val_batch_size: int = 1
     context_length: int = 1024
     seed: int = 42
 
@@ -35,7 +36,7 @@ class ModelConfig:
 @dataclass(frozen=True)
 class TrainerConfig:
     load_from: str | None = None
-    device: str = "mps"
+    device: str = "cuda:2"
     dtype: Literal["float32", "bfloat16"] = "float32"
     max_steps: int = 200_000
     max_grad_norm: float = 1.0
@@ -51,7 +52,7 @@ class TrainerConfig:
     log_every: int = 10
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class Config:
     data: DataConfig
     model: ModelConfig
