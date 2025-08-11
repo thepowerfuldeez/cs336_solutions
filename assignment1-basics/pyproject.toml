@@ -21,6 +21,7 @@ dependencies = [
     "ty>=0.0.1a16",
     "snakeviz>=2.2.2",
     "maturin>=1.9.1",
+    "pathos>=0.3.4",
 ]
 
 [build-system]

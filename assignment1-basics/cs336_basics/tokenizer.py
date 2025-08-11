@@ -92,7 +92,6 @@ logger = logging.getLogger(__name__)
 #             res.extend(key)
 #     return index, res
 
-from numba import njit
 import numpy as np
 import heapq
 

@@ -1,0 +1,99 @@
+import torch
+import torch.nn as nn
+from torch import Tensor
+from jaxtyping import Float, Int
+from tqdm.auto import tqdm
+
+from cs336_basics.utils.logger import logger
+from cs336_basics.transformer.core import SwiGLU, RMSNorm, Embedding, Linear, softmax
+from cs336_basics.transformer.attention import MultiHeadSelfAttention
+
+_MAX_SEQ_LEN = 4096
+
+
+class Block(nn.Module):
+    def __init__(self, d_model: int, n_heads: int, d_ff: int, theta: float = 10_000, device=None, dtype=None):
+        super().__init__()
+        self.ln1 = RMSNorm(d_model, device=device, dtype=dtype)
+        self.attn = MultiHeadSelfAttention(
+            d_model, n_heads, theta, max_seq_len=_MAX_SEQ_LEN, device=device, dtype=dtype
+        )
+        self.ln2 = RMSNorm(d_model, device=device, dtype=dtype)
+        self.ffn = SwiGLU(d_model, d_ff)
+
+    def forward(
+        self, x: Float[Tensor, "b seq d_model"], token_positions: Int[Tensor, "b seq"] | None = None
+    ) -> Float[Tensor, "b seq d_model"]:
+        y = x + self.attn(self.ln1(x))
+        return y + self.ffn(self.ln2(y))
+
+
+class Transformer(nn.Module):
+    def __init__(
+        self,
+        n_layers: int,
+        vocab_size: int,
+        d_model: int,
+        n_heads: int,
+        d_ff: int,
+        theta: float = 10_000,
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        self.embedding = Embedding(vocab_size, d_model, device, dtype)
+        self.blocks = nn.ModuleList(
+            [Block(d_model, n_heads, d_ff, theta, device=device, dtype=dtype) for _ in range(n_layers)]
+        )
+        self.final_norm = RMSNorm(d_model, device=device, dtype=dtype)
+        self.lm_head = Linear(d_model, vocab_size, device, dtype)
+
+    def forward(self, x: Int[Tensor, "bs seq"]) -> Float[Tensor, "bs seq vocab_size"]:
+        x: Float[Tensor, "bs seq d_model"] = self.embedding(x)
+        for i, layer in enumerate(self.blocks):
+            x = layer(x)
+        x = self.final_norm(x)
+        return self.lm_head(x)
+
+    def generate(
+        self,
+        prompt: Int[Tensor, "bs seq"],
+        eos_token_id: int,
+        top_p: float = 1.0,
+        temperature: float = 1.0,
+        max_steps: int = 32,
+    ):
+        """
+        Perform decoding with nucleous sampling and temperature
+        """
+        input_seq = prompt
+        with torch.inference_mode():
+            for _ in tqdm(range(max_steps)):
+                logits: Float[Tensor, "bs seq vocab"] = self.forward(input_seq)
+                if temperature == 0:
+                    out: Int[Tensor, "bs"] = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
+                else:
+                    probs: Float[Tensor, "bs vocab"] = softmax(logits, dim=-1, temperature=temperature)[:, -1, :]
+                    # nucleous sampling
+                    if top_p < 1.0:
+                        sorted_values, sorted_idx = probs.sort(-1, descending=True)
+                        mask = sorted_values.cumsum(-1) <= top_p
+                        orig_mask = mask.gather(-1, sorted_idx.argsort(-1))
+                        for i in range(len(probs)):
+                            probs[i].masked_fill_(~orig_mask[i], 0.0)
+                            probs[i] /= probs[i].sum(-1)
+                    out: Int[Tensor, "bs"] = torch.multinomial(probs, 1)
+                input_seq = torch.cat([input_seq, out])
+                if (out == eos_token_id).all(dim=-1).item():
+                    break
+
+
+if __name__ == "__main__":
+    d_model = 1024
+    d_ff = 2048
+    num_heads = 8
+    theta = 10_000
+    block = Block(d_model, num_heads, theta, d_ff / d_model)
+    x = torch.randn(4, 64, 1024)
+
+    print(block(x).shape)
