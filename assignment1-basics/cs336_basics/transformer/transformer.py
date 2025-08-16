@@ -78,14 +78,16 @@ class Transformer(nn.Module):
                     if top_p < 1.0:
                         sorted_values, sorted_idx = probs.sort(-1, descending=True)
                         mask = sorted_values.cumsum(-1) <= top_p
+                        mask[:, 0] = True
                         orig_mask = mask.gather(-1, sorted_idx.argsort(-1))
                         for i in range(len(probs)):
                             probs[i].masked_fill_(~orig_mask[i], 0.0)
                             probs[i] /= probs[i].sum(-1)
                     out: Int[Tensor, "bs"] = torch.multinomial(probs, 1)
-                input_seq = torch.cat([input_seq, out])
-                if (out == eos_token_id).all(dim=-1).item():
+                input_seq = torch.cat([input_seq, out], dim=-1)
+                if (out[-1:] == eos_token_id).all(dim=-1).item():
                     break
+        return input_seq
 
 
 if __name__ == "__main__":

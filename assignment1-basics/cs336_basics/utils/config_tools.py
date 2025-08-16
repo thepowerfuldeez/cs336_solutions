@@ -1,8 +1,10 @@
+import json
+from pathlib import Path
 from dataclasses import asdict, replace
 from typing import Any
 from datetime import datetime
 
-from cs336_basics.config_schema import Config
+from cs336_basics.config_schema import Config, default_cfg, DataConfig, ModelConfig, TrainerConfig, OptimConfig
 
 
 def dataclass_to_nested_dict(dc) -> dict[str, Any]:
@@ -40,6 +42,22 @@ def apply_overrides(cfg, overrides: dict[str, Any]):
     for k, v in overrides.items():
         cfg = set_by_dotted(cfg, k, v)
     return cfg
+
+
+def save_config(cfg: Config):
+    return json.dumps(dataclass_to_nested_dict(cfg), default=str)
+
+
+def load_config(config_str: str):
+    cfg: Config = default_cfg
+    updated_cfg = apply_overrides(cfg, json.loads(config_str))
+    updated_cfg = Config(
+        data=DataConfig(**updated_cfg.data),
+        model=ModelConfig(**updated_cfg.model),
+        trainer=TrainerConfig(**updated_cfg.trainer),
+        optim=OptimConfig(**updated_cfg.optim),
+    )
+    return updated_cfg
 
 
 def render_template(template: str, cfg, extra: dict[str, Any] | None = None) -> str:

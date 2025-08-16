@@ -593,7 +593,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    return save_checkpoint(out, model, optimizer, iteration)
+    return save_checkpoint(out, None, model, optimizer, iteration)
 
 
 def run_load_checkpoint(

@@ -5,8 +5,8 @@ from pathlib import Path
 
 @dataclass(frozen=True)
 class DataConfig:
-    train_path: str | Path
-    validation_path: str | Path
+    train_path: str | Path = ""
+    validation_path: str | Path = ""
     batch_size: int = 1
     val_batch_size: int = 1
     context_length: int = 1024
@@ -15,9 +15,9 @@ class DataConfig:
 
 @dataclass(frozen=False)
 class OptimConfig:
-    lr: float = 3e-4
-    wd: float = 1e-6
-    betas: tuple[float, float] = (0.9, 0.95)
+    lr: float = 7e-3
+    wd: float = 1e-7
+    betas: tuple[float, float] = (0.9, 0.99)
     lr_min: float = 1e-6
     warmup_steps: int = 100
     cosine_steps: int = 10_000
@@ -33,7 +33,7 @@ class ModelConfig:
     theta: float = 10_000
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=False)
 class TrainerConfig:
     load_from: str | None = None
     device: str = "cuda:2"
@@ -59,3 +59,6 @@ class Config:
     optim: OptimConfig
     trainer: TrainerConfig
     project: str = "cs336"  # for wandb
+
+
+default_cfg = Config(DataConfig(), ModelConfig(), OptimConfig(), TrainerConfig())

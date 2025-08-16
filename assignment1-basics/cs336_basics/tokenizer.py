@@ -306,7 +306,6 @@ if __name__ == "__main__":
     #     logger.info(f"Throughput: {22 / taken:.2f} MB/s")
     #     np.save(str((tokenized_path / fname).with_suffix(".npy")), np.array(tokens, dtype="uint16"))
 
-
     tok = Tokenizer.from_files(
         "/Users/george/Projects/learning/assignment1-basics/vocab_owt.pickle",
         "/Users/george/Projects/learning/assignment1-basics/merges_owt.pickle",

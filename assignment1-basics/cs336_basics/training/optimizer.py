@@ -40,6 +40,7 @@ class AdamW(torch.optim.Optimizer):
 
     def step(self, closure: Any | None = None):
         loss = None if closure is None else closure()
+        total_update_sq, total_weight_sq = 0.0, 0.0
         for group in self.param_groups:
             lr = group["lr"]
             beta1, beta2 = group["betas"]
@@ -62,12 +63,19 @@ class AdamW(torch.optim.Optimizer):
                 bias_correction_term: float = math.sqrt(1 - beta2**t) / (1 - beta1**t)
 
                 # ! wd is decoupled, it should go first !
-                p.data -= lr * wd * p.data
-                p.data -= bias_correction_term * lr * m / (torch.sqrt(v) + eps)
+                wd_delta = -lr * wd * p.data
+                adam_delta = -lr * bias_correction_term * m / (torch.sqrt(v) + eps)
+                delta = wd_delta + adam_delta
+
+                total_update_sq += (delta.float().norm() ** 2).item()
+                total_weight_sq += (p.data.float().norm() ** 2).item()
+
+                p.data.add_(delta)
                 state["t"] = t + 1
                 state["m"] = m
                 state["v"] = v
-        return loss
+        update_ratio = math.sqrt(total_update_sq) / (math.sqrt(total_weight_sq) + eps)
+        return loss, update_ratio
 
 
 def get_cosine_lr(t: int, lr_max: float, lr_min: float, warmup_steps: int, cosine_steps: int) -> float:
