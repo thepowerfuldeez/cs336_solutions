@@ -21,6 +21,8 @@ class OptimConfig:
     lr_min: float = 1e-6
     warmup_steps: int = 100
     cosine_steps: int = 10_000
+    stable_steps: int = 10_000
+    decay_steps: int = 10_000
 
 
 @dataclass(frozen=True)

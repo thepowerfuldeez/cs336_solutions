@@ -101,6 +101,28 @@ def get_cosine_lr(t: int, lr_max: float, lr_min: float, warmup_steps: int, cosin
         return lr_min
 
 
+def get_wsd_lr(t: int, lr_max: float, lr_min: float, warmup_steps: int, stable_steps: int, decay_steps: int) -> float:
+    """
+    Update learning rate based on Warmup Stable Decay schedule
+
+    t: int - current step
+    lr_max: float - max learning rate (usually set as original learning rate)
+    lr_min: float - minimum learning rate after decay
+    warmup_steps: int - warmup steps starting from ~0 (t / warmup_steps) * lr_max
+    stable_steps: int - total number of steps in the stable state [warmup_steps, decay_steps]
+    decay_steps: int - total number of steps in the decay state to lr_min [decay_steps, total_steps]
+
+    Returns: updated lr
+    """
+    if t < warmup_steps:
+        return t / warmup_steps * lr_max
+    elif warmup_steps <= t < warmup_steps + stable_steps:
+        return lr_max
+    else:
+        # t >= warmup_steps + stable_steps
+        return (1 - (t - warmup_steps - stable_steps) / decay_steps) * (lr_max - lr_min)
+
+
 def clip_grad_norm_(params: Iterable[nn.Parameter], max_grad_norm: float = 1.0, eps: float = 1e-6) -> float:
     """
     Clips gradients to `max_grad_norm` in-place
