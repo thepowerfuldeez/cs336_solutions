@@ -430,7 +430,7 @@ def run_transformer_lm(
                 "out.weight": weights[f"layers.{i}.attn.output_proj.weight"],
             }
         )
-    return transformer(in_indices)
+    return transformer(in_indices)[0]
 
 
 def run_rmsnorm(
@@ -593,7 +593,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    return save_checkpoint(out, None, model, optimizer, iteration)
+    return save_checkpoint(out, None, model, [optimizer], iteration)
 
 
 def run_load_checkpoint(
@@ -614,7 +614,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    return load_checkpoint(src, model, optimizer)
+    return load_checkpoint(src, model, [optimizer])
 
 
 def get_tokenizer(

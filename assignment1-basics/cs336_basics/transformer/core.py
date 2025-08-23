@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from jaxtyping import Float, Int
-
 from einops import einsum, rearrange
 
 
@@ -43,7 +42,7 @@ class Embedding(nn.Module):
 class RMSNorm(nn.Module):
     def __init__(self, d_model: int, eps: float = 1e-5, device=None, dtype=None):
         super().__init__()
-        self.gain = nn.Parameter(torch.zeros(d_model, device=device, dtype=dtype))
+        self.gain = nn.Parameter(torch.ones(d_model, device=device, dtype=dtype))
         self.eps = eps
 
     def forward(self, x: Float[Tensor, "... d_model"]) -> Float[Tensor, "... d_model"]:
@@ -52,8 +51,9 @@ class RMSNorm(nn.Module):
         """
         in_dtype = x.dtype
         x = x.to(torch.float32)
-        rms: Float[Tensor, "... 1"] = torch.sqrt((x * x).mean(-1) + self.eps).unsqueeze(-1)
-        out: Tensor = x / rms * self.gain
+        with torch.autocast("cuda", enabled=False):
+            reverse_rms: Float[Tensor, "... 1"] = torch.rsqrt((x * x).mean(-1) + self.eps).unsqueeze(-1)
+            out: Tensor = x * reverse_rms * self.gain
         return out.to(in_dtype)
 
 

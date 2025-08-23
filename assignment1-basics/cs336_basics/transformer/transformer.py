@@ -12,20 +12,31 @@ _MAX_SEQ_LEN = 4096
 
 
 class Block(nn.Module):
-    def __init__(self, d_model: int, n_heads: int, d_ff: int, theta: float = 10_000, device=None, dtype=None):
+    def __init__(
+        self,
+        d_model: int,
+        n_heads: int,
+        d_ff: int,
+        attn_qknorm: bool = False,
+        theta: float = 10_000,
+        device=None,
+        dtype=None,
+    ):
         super().__init__()
         self.ln1 = RMSNorm(d_model, device=device, dtype=dtype)
         self.attn = MultiHeadSelfAttention(
-            d_model, n_heads, theta, max_seq_len=_MAX_SEQ_LEN, device=device, dtype=dtype
+            d_model, n_heads, theta, max_seq_len=_MAX_SEQ_LEN, qknorm=attn_qknorm, device=device, dtype=dtype
         )
         self.ln2 = RMSNorm(d_model, device=device, dtype=dtype)
-        self.ffn = SwiGLU(d_model, d_ff)
+        self.ffn = SwiGLU(d_model, d_ff, device=device, dtype=dtype)
 
     def forward(
         self, x: Float[Tensor, "b seq d_model"], token_positions: Int[Tensor, "b seq"] | None = None
     ) -> Float[Tensor, "b seq d_model"]:
-        y = x + self.attn(self.ln1(x))
-        return y + self.ffn(self.ln2(y))
+        # prenorm_act_norm = x.detach().norm().item()
+        prenorm_act_norm = x.detach().pow(2).mean(dim=-1).sqrt().mean()
+        y = x + self.attn(self.ln1(x), token_positions)
+        return y + self.ffn(self.ln2(y)), prenorm_act_norm
 
 
 class Transformer(nn.Module):
@@ -36,22 +47,29 @@ class Transformer(nn.Module):
         d_model: int,
         n_heads: int,
         d_ff: int,
+        attn_qknorm: bool = False,
         theta: float = 10_000,
         device=None,
         dtype=None,
+        weight_tying: bool = False,
     ):
         super().__init__()
         self.embedding = Embedding(vocab_size, d_model, device, dtype)
         self.blocks = nn.ModuleList(
-            [Block(d_model, n_heads, d_ff, theta, device=device, dtype=dtype) for _ in range(n_layers)]
+            [Block(d_model, n_heads, d_ff, attn_qknorm, theta, device=device, dtype=dtype) for _ in range(n_layers)]
         )
         self.final_norm = RMSNorm(d_model, device=device, dtype=dtype)
         self.lm_head = Linear(d_model, vocab_size, device, dtype)
+        if weight_tying:
+            self.lm_head.weight = self.embedding.weight
+        self.prenorm_activation_norms: list[float] = []
 
     def forward(self, x: Int[Tensor, "bs seq"]) -> Float[Tensor, "bs seq vocab_size"]:
         x: Float[Tensor, "bs seq d_model"] = self.embedding(x)
+        self.prenorm_activation_norms: list[float] = []
         for i, layer in enumerate(self.blocks):
-            x = layer(x)
+            x, prenorm_act_norm = layer(x)
+            self.prenorm_activation_norms.append(prenorm_act_norm.item())
         x = self.final_norm(x)
         return self.lm_head(x)
 

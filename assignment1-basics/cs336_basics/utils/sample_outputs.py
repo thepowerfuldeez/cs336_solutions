@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from argparse import ArgumentParser
 
@@ -5,6 +6,7 @@ import torch
 
 from cs336_basics.tokenizer import Tokenizer
 from cs336_basics.training.trainer import Trainer
+from cs336_basics.utils.logger import logger
 
 
 def parse_args():
@@ -13,33 +15,30 @@ def parse_args():
         "--checkpoint",
         default="/home/george/cs336_solutions/assignment1-basics/cs336_basics/checkpoints/betas=[0.9, 0.99]/8000.pt",
     )
+    p.add_argument("--prompt", default="Once")
     p.add_argument("--tokenizer", default="/home/george/cs336_solutions/assignment1-basics/tokenizer/tinystories")
     p.add_argument("--top-p", default=0.95, type=float)
     p.add_argument("--temperature", default=0.0, type=float)
+    p.add_argument("--device", default="cuda:2", type=str)
     return p.parse_args()
 
 
 def main():
     args = parse_args()
-    trainer = Trainer(load_from=args.checkpoint)
+    trainer = Trainer(load_from=args.checkpoint, load_components="infer", **{"trainer.device": args.device})
     tokenizer = Tokenizer.from_files(
         Path(args.tokenizer) / "vocab.pickle", Path(args.tokenizer) / "merges.pickle", special_tokens=["<|endoftext|>"]
     )
     eos_token_id = tokenizer.encode(tokenizer.special_tokens[0])[0]
 
-    print("EOS", eos_token_id)
 
-    prompt = torch.tensor(tokenizer.encode("Once")).unsqueeze(0).to(trainer.cfg.trainer.device)
-    generated = trainer.generate(
-        prompt,
-        eos_token_id,
-        top_p=args.top_p,
-        temperature=args.temperature,
-        max_steps=512
-    )
-    print(generated)
+    logger.info(f"EOS {eos_token_id}")
 
-    print(tokenizer.decode(generated[0].cpu().tolist()))
+    prompt = torch.tensor(tokenizer.encode(args.prompt)).unsqueeze(0).to(trainer.cfg.trainer.device)
+    generated = trainer.generate(prompt, eos_token_id, top_p=args.top_p, temperature=args.temperature, max_steps=512)
+    logger.info(generated)
+
+    logger.info(tokenizer.decode(generated[0].cpu().tolist()))
 
 
 if __name__ == "__main__":

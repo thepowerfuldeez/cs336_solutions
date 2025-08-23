@@ -13,6 +13,7 @@ from cs336_basics.training import (
     save_checkpoint,
     MemoryMappedDataset,
     AdamW,
+    Muon,
     get_cosine_lr,
     get_wsd_lr,
     clip_grad_norm_,
@@ -20,7 +21,7 @@ from cs336_basics.training import (
 )
 from cs336_basics.config_schema import Config
 from cs336_basics.utils.logger import logger
-from cs336_basics.utils.config_tools import load_config, save_config
+from cs336_basics.utils.config_tools import load_config, save_config, apply_overrides
 
 torch.set_float32_matmul_precision("high")
 
@@ -36,10 +37,19 @@ class Trainer:
     class that takes cfg: Config and runs training
     """
 
-    def __init__(self, cfg: Config | None = None, load_from: str | None = None, wandb: Any | None = None):
+    def __init__(
+        self,
+        cfg: Config | None = None,
+        load_from: str | None = None,
+        load_components: str = "all",
+        wandb: Any | None = None,
+        **cfg_overrides: dict,
+    ):
         if cfg is None:
             assert load_from is not None, "you must load from checkpoint if cfg is None"
-            self.cfg = load_config(torch.load(load_from)["config"])
+            self.cfg = load_config(torch.load(load_from, map_location="cpu")["config"])
+            self.cfg = apply_overrides(self.cfg, cfg_overrides)
+            logger.info(f"Loading from the checkpoint, device={self.cfg.trainer.device}")
         else:
             logger.info("Loading from config")
             self.cfg = cfg
@@ -49,35 +59,85 @@ class Trainer:
             self.cfg.model.d_model,
             self.cfg.model.n_heads,
             self.cfg.model.d_ff,
+            self.cfg.model.attn_qknorm,
             self.cfg.model.theta,
-            torch.device(self.cfg.trainer.device),
-            getattr(torch, self.cfg.trainer.dtype),
+            device=self.cfg.trainer.device,
+            # always keep master weights in fp32
+            dtype=torch.float32,
+            weight_tying=self.cfg.model.weight_tying,
         )
+        logger.info("Created a model")
         self.model.to(self.cfg.trainer.device)
         self.model.compile()
-        self.optimizer = AdamW(
-            self.model.parameters(), lr=self.cfg.optim.lr, betas=self.cfg.optim.betas, weight_decay=self.cfg.optim.wd
-        )
-        logger.info(f"Model is created with hparams {self.cfg.model}")
-        self.train_dataset = MemoryMappedDataset(
-            self.cfg.data.train_path,
-            self.cfg.data.context_length,
-            torch.device(self.cfg.trainer.device),
-            self.cfg.data.seed,
-        )
-        self.val_dataset = MemoryMappedDataset(
-            self.cfg.data.validation_path,
-            self.cfg.data.context_length,
-            torch.device(self.cfg.trainer.device),
-            self.cfg.data.seed,
-        )
-        self.save_dir = Path(self.cfg.trainer.save_dir)
-        self.save_dir.mkdir(exist_ok=True, parents=True)
+        if load_components == "all":
+            self._init_optimizers()
+
+            logger.info(f"Model is created with hparams {self.cfg.model}")
+            self.train_dataset = MemoryMappedDataset(
+                self.cfg.data.train_path,
+                self.cfg.data.context_length,
+                torch.device(self.cfg.trainer.device),
+                self.cfg.data.seed,
+            )
+            self.val_dataset = MemoryMappedDataset(
+                self.cfg.data.validation_path,
+                self.cfg.data.context_length,
+                torch.device(self.cfg.trainer.device),
+                self.cfg.data.seed,
+            )
+            self.save_dir = Path(self.cfg.trainer.save_dir)
+            self.save_dir.mkdir(exist_ok=True, parents=True)
+        else:
+            self.optimizer = None
         self.iteration = 0
         self.wandb = wandb
         load_from = load_from or self.cfg.trainer.load_from
         if load_from is not None:
             self.load_state(load_from)
+
+        # aux scaler for bf16 if used
+        if self.cfg.trainer.dtype == "bfloat16":
+            self.scaler = torch.amp.grad_scaler.GradScaler()
+
+    def _init_optimizers(self):
+        if self.cfg.optim.use_muon:
+            one_d_params = [
+                p for n, p in self.model.named_parameters() if p.ndim < 2 or "embedding" in n or "lm_head" in n
+            ]
+            two_d_params = [
+                p
+                for n, p in self.model.named_parameters()
+                if p.ndim >= 2 and "embedding" not in n and "lm_head" not in n
+            ]
+            self.optimizer1 = AdamW(
+                one_d_params,
+                lr=self.cfg.optim.lr,
+                betas=self.cfg.optim.betas,
+                weight_decay=self.cfg.optim.wd,
+            )
+            if self.cfg.optim.muon_lr is None:
+                muon_lr = self.cfg.optim.lr
+            else:
+                muon_lr = self.cfg.optim.muon_lr
+            if self.cfg.optim.muon_wd is None:
+                muon_wd = self.cfg.optim.wd
+            else:
+                muon_wd = self.cfg.optim.muon_wd
+            self.optimizer2 = Muon(
+                two_d_params,
+                lr=muon_lr,
+                momentum=self.cfg.optim.betas[0],
+                weight_decay=muon_wd,
+            )
+            self.optimizers = [self.optimizer1, self.optimizer2]
+        else:
+            self.optimizer = AdamW(
+                self.model.parameters(),
+                lr=self.cfg.optim.lr,
+                betas=self.cfg.optim.betas,
+                weight_decay=self.cfg.optim.wd,
+            )
+            self.optimizers = [self.optimizer]
 
     @property
     def tokens_processed(self):
@@ -85,11 +145,11 @@ class Trainer:
 
     def load_state(self, path: Path):
         logger.info(f"Loading state from {str(path)}")
-        self.iteration = load_checkpoint(path, self.model, self.optimizer)
+        self.iteration = load_checkpoint(path, self.model, self.optimizers, device=self.cfg.trainer.device)
 
     def save_state(self):
         logger.info(f"Saving training state at iter={self.iteration}")
-        save_checkpoint(self.save_dir / f"{self.iteration}.pt", self.cfg, self.model, self.optimizer, self.iteration)
+        save_checkpoint(self.save_dir / f"{self.iteration}.pt", self.cfg, self.model, self.optimizers, self.iteration)
 
     def log(self, **data):
         for k, v in data.items():
@@ -115,37 +175,105 @@ class Trainer:
         self.model.eval()
         val_iters = 0
         ds_perplexity = torch.zeros((1,), device="cpu")
-        with torch.inference_mode():
+        val_loss_epoch = torch.zeros((1,), device="cpu")
+        with torch.inference_mode(), torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"):
             for inputs, targets in tqdm(
                 self.val_dataset.get_iterator(self.cfg.data.val_batch_size),
                 total=len(self.val_dataset) // (self.cfg.data.val_batch_size * self.cfg.data.context_length),
                 desc="Running validation",
             ):
                 logits = self.model(inputs)
-                perplexity = cross_entropy(logits, targets).exp().cpu()
+                val_loss = cross_entropy(logits, targets)
+                perplexity = val_loss.exp().cpu()
                 ds_perplexity += perplexity
+                val_loss_epoch += val_loss.cpu()
                 val_iters += 1
         mem("after validation")
-        return ds_perplexity.item() / val_iters
+        return {
+            "val_loss": val_loss_epoch.item() / val_iters,
+            "val_perplexity": ds_perplexity.item() / val_iters,
+        }
+
+    def _set_lr(self):
+        """
+        Sets learning rate according to the learning rate schedule
+        """
+        if self.cfg.optim.scheduler == "cosine":
+            iter_lr = get_cosine_lr(
+                self.iteration,
+                self.cfg.optim.lr,
+                self.cfg.optim.lr_min,
+                self.cfg.optim.warmup_steps,
+                self.cfg.optim.cosine_steps,
+            )
+        elif self.cfg.optim.scheduler == "wsd":
+            iter_lr = get_wsd_lr(
+                self.iteration,
+                self.cfg.optim.lr,
+                self.cfg.optim.lr_min,
+                self.cfg.optim.warmup_steps,
+                self.cfg.optim.stable_steps,
+                self.cfg.optim.decay_steps,
+            )
+        else:
+            raise ValueError("unrecognized optim scheduler")
+
+        if self.cfg.optim.use_muon:
+            # second optimizer is muon
+            for pg in self.optimizers[1].param_groups:
+                # momentum warmup for fixed 300 steps
+                momentum = self.cfg.optim.betas[0]
+                pg["momentum"] = min(max(self.iteration, 1), 300) / 300 * momentum
+
+        for opt in self.optimizers:
+            for pg in opt.param_groups:
+                pg["lr"] = iter_lr
+        return iter_lr
 
     def train_step(self, inputs, targets):
         self.model.train()
-        iter_lr = get_cosine_lr(
-            self.iteration,
-            self.cfg.optim.lr,
-            self.cfg.optim.lr_min,
-            self.cfg.optim.warmup_steps,
-            self.cfg.optim.cosine_steps,
-        )
-        for pg in self.optimizer.param_groups:
-            pg["lr"] = iter_lr
-        self.optimizer.zero_grad(set_to_none=True)
-        logits = self.model(inputs)
-        loss = cross_entropy(logits, targets)
-        loss.backward()
-        grad_norm = clip_grad_norm_(self.model.parameters(), self.cfg.trainer.max_grad_norm)
-        _, update_ratio = self.optimizer.step()
-        return {"train_loss": loss.item(), "grad_norm": grad_norm, "lr": iter_lr, "update_ratio": update_ratio}
+        iter_lr = self._set_lr()
+
+        with torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"):
+            logits = self.model(inputs)
+            prenorm_activation_norms = self.model.prenorm_activation_norms
+            loss = cross_entropy(logits, targets)
+        if self.cfg.trainer.gradient_accumulation_steps > 1:
+            loss /= self.cfg.trainer.gradient_accumulation_steps
+
+        if self.cfg.trainer.dtype == "bfloat16":
+            self.scaler.scale(loss).backward()
+            for opt in self.optimizers:
+                self.scaler.unscale_(opt)
+        else:
+            loss.backward()
+
+        with torch.autocast("cuda", enabled=False):
+            grad_norm = clip_grad_norm_(self.model.parameters(), self.cfg.trainer.max_grad_norm)
+
+        if self.iteration % self.cfg.trainer.gradient_accumulation_steps == 0:
+            if self.cfg.trainer.dtype == "bfloat16":
+                for opt in self.optimizers:
+                    self.scaler.step(opt)
+                update_ratio = 0.0
+                self.scaler.update()
+            else:
+                for opt in self.optimizers:
+                    opt.step()
+            for opt in self.optimizers:
+                opt.zero_grad(set_to_none=True)
+
+        parameter_norms = {
+            k: p.data.detach().norm().item() for k, p in self.model.named_parameters() if "attn" in k or "ffn" in k
+        }
+        return {
+            "train_loss": loss.item(),
+            "grad_norm": grad_norm,
+            "lr": iter_lr,
+            "update_ratio": update_ratio,
+            "prenorm_activation_norms": prenorm_activation_norms,
+            "parameter_norms": parameter_norms,
+        }
 
     def train(self):
         logger.info("Starting training loop")
@@ -153,8 +281,8 @@ class Trainer:
             if self.iteration % self.cfg.trainer.save_every == 0:
                 self.save_state()
             if self.iteration > 0 and self.iteration % self.cfg.trainer.val_every == 0:
-                perplexity = self.validate()
-                self.log(val_perplexity=perplexity)
+                val_metrics = self.validate()
+                self.log(**val_metrics)
 
             inputs, targets = self.train_dataset.get_batch(self.cfg.data.batch_size)
             t0 = time.monotonic()
@@ -162,6 +290,8 @@ class Trainer:
             t1 = time.monotonic()
             if self.iteration % self.cfg.trainer.log_every == 0:
                 logger.info(f"Train iteration {self.iteration}")
+                prenorm_log = {f"log/block{i}_prenorm": v for i, v in enumerate(step_stats["prenorm_activation_norms"])}
+                pnorm_log = {f"log/{k}_norm": v for k, v in step_stats["parameter_norms"].items()}
                 self.log(
                     **{
                         "train/loss": step_stats["train_loss"],
@@ -171,8 +301,11 @@ class Trainer:
                         "train/step": self.iteration,
                         "train/step_time": t1 - t0,
                         "train/tokens_processed": self.tokens_processed,
+                        **prenorm_log,
+                        **pnorm_log,
                     }
                 )
             self.iteration += 1
         self.save_state()
-        self.validate()
+        val_metrics = self.validate()
+        self.log(**val_metrics)
