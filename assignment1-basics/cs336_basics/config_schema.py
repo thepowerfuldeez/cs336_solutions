@@ -19,7 +19,12 @@ class OptimConfig:
     wd: float = 1e-7
     betas: tuple[float, float] = (0.9, 0.99)
     lr_min: float = 1e-6
-    warmup_steps: int = 100
+    scheduler: str = "cosine"  # or "wsd"
+    use_muon: bool = False
+    # if None then use lr / wd
+    muon_lr: float | None = None
+    muon_wd: float | None = None
+    warmup_steps: int = 1000
     cosine_steps: int = 10_000
     stable_steps: int = 10_000
     decay_steps: int = 10_000
@@ -33,6 +38,8 @@ class ModelConfig:
     n_heads: int = 16
     vocab_size: int = 10_000
     theta: float = 10_000
+    weight_tying: bool = False
+    attn_qknorm: bool = False
 
 
 @dataclass(frozen=False)
@@ -42,7 +49,7 @@ class TrainerConfig:
     dtype: Literal["float32", "bfloat16"] = "float32"
     max_steps: int = 200_000
     max_grad_norm: float = 1.0
-    mixed_precision: bool = True
+    gradient_accumulation_steps: int = 1    
     # run_name: str = "{date}_{optim.lr}"  # template
     run_name: str = "{date}"  # template
     save_dir: str | Path = Path(__file__).parent / "checkpoints"
