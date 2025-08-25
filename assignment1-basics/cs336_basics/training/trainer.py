@@ -1,3 +1,4 @@
+import math
 import time
 from pathlib import Path
 from typing import Any
@@ -60,6 +61,7 @@ class Trainer:
             self.cfg.model.n_heads,
             self.cfg.model.d_ff,
             self.cfg.model.attn_qknorm,
+            self.cfg.model.layernorm_scaling,
             self.cfg.model.theta,
             device=self.cfg.trainer.device,
             # always keep master weights in fp32
@@ -88,7 +90,7 @@ class Trainer:
             self.save_dir = Path(self.cfg.trainer.save_dir)
             self.save_dir.mkdir(exist_ok=True, parents=True)
         else:
-            self.optimizer = None
+            self.optimizers = None
         self.iteration = 0
         self.wandb = wandb
         load_from = load_from or self.cfg.trainer.load_from
@@ -104,6 +106,12 @@ class Trainer:
             one_d_params = [
                 p for n, p in self.model.named_parameters() if p.ndim < 2 or "embedding" in n or "lm_head" in n
             ]
+            # Implement muP scaling, for embedding it's sqrt(d), for out it's 0.5
+            for n, p in self.model.named_parameters():
+                if "embedding" in n:
+                    setattr(p, "lr_mul", self.cfg.model.d_model**2)
+                elif "lm_head" in n:
+                    setattr(p, "lr_mul", 0.5)
             two_d_params = [
                 p
                 for n, p in self.model.named_parameters()
@@ -174,8 +182,7 @@ class Trainer:
         mem("before validation")
         self.model.eval()
         val_iters = 0
-        ds_perplexity = torch.zeros((1,), device="cpu")
-        val_loss_epoch = torch.zeros((1,), device="cpu")
+        val_loss_epoch = torch.zeros((), device=self.model.embedding.weight.data.device, dtype=torch.float32)
         with torch.inference_mode(), torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"):
             for inputs, targets in tqdm(
                 self.val_dataset.get_iterator(self.cfg.data.val_batch_size),
@@ -183,15 +190,14 @@ class Trainer:
                 desc="Running validation",
             ):
                 logits = self.model(inputs)
-                val_loss = cross_entropy(logits, targets)
-                perplexity = val_loss.exp().cpu()
-                ds_perplexity += perplexity
-                val_loss_epoch += val_loss.cpu()
+                val_loss, _ = cross_entropy(logits, targets)
+                val_loss_epoch += val_loss.to(torch.float32)
                 val_iters += 1
         mem("after validation")
+        val_loss_epoch = (val_loss_epoch / val_iters).item()
         return {
-            "val_loss": val_loss_epoch.item() / val_iters,
-            "val_perplexity": ds_perplexity.item() / val_iters,
+            "val_loss": val_loss_epoch,
+            "val_perplexity": math.exp(val_loss_epoch),
         }
 
     def _set_lr(self):
@@ -234,40 +240,47 @@ class Trainer:
         self.model.train()
         iter_lr = self._set_lr()
 
+        z_loss_weight = self.cfg.trainer.z_loss_weight
+
         with torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"):
             logits = self.model(inputs)
             prenorm_activation_norms = self.model.prenorm_activation_norms
-            loss = cross_entropy(logits, targets)
+            loss, z_loss = cross_entropy(logits, targets)
         if self.cfg.trainer.gradient_accumulation_steps > 1:
             loss /= self.cfg.trainer.gradient_accumulation_steps
+            z_loss /= self.cfg.trainer.gradient_accumulation_steps
+
+        train_loss = loss.item()
 
         if self.cfg.trainer.dtype == "bfloat16":
-            self.scaler.scale(loss).backward()
-            for opt in self.optimizers:
-                self.scaler.unscale_(opt)
+            self.scaler.scale(loss + z_loss_weight * z_loss).backward()
         else:
-            loss.backward()
+            (loss + z_loss_weight * z_loss).backward()
 
-        with torch.autocast("cuda", enabled=False):
-            grad_norm = clip_grad_norm_(self.model.parameters(), self.cfg.trainer.max_grad_norm)
-
+        update_ratio = 0.0
         if self.iteration % self.cfg.trainer.gradient_accumulation_steps == 0:
             if self.cfg.trainer.dtype == "bfloat16":
                 for opt in self.optimizers:
+                    self.scaler.unscale_(opt)
+                grad_norm = clip_grad_norm_(self.model.parameters(), self.cfg.trainer.max_grad_norm)
+                for opt in self.optimizers:
                     self.scaler.step(opt)
-                update_ratio = 0.0
                 self.scaler.update()
             else:
+                grad_norm = clip_grad_norm_(self.model.parameters(), self.cfg.trainer.max_grad_norm)
                 for opt in self.optimizers:
                     opt.step()
             for opt in self.optimizers:
                 opt.zero_grad(set_to_none=True)
+        else:
+            grad_norm = 0.0
 
         parameter_norms = {
             k: p.data.detach().norm().item() for k, p in self.model.named_parameters() if "attn" in k or "ffn" in k
         }
         return {
-            "train_loss": loss.item(),
+            "train_loss": train_loss * self.cfg.trainer.gradient_accumulation_steps,
+            "z_loss": z_loss.item() * self.cfg.trainer.gradient_accumulation_steps,
             "grad_norm": grad_norm,
             "lr": iter_lr,
             "update_ratio": update_ratio,
@@ -295,6 +308,7 @@ class Trainer:
                 self.log(
                     **{
                         "train/loss": step_stats["train_loss"],
+                        "train/z_loss": step_stats["z_loss"],
                         "train/grad_norm": step_stats["grad_norm"],
                         "train/learning_rate": step_stats["lr"],
                         "train/update_ratio": step_stats["update_ratio"],

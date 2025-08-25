@@ -40,6 +40,7 @@ class ModelConfig:
     theta: float = 10_000
     weight_tying: bool = False
     attn_qknorm: bool = False
+    layernorm_scaling: bool = False
 
 
 @dataclass(frozen=False)
@@ -48,6 +49,7 @@ class TrainerConfig:
     device: str = "cuda:2"
     dtype: Literal["float32", "bfloat16"] = "float32"
     max_steps: int = 200_000
+    z_loss_weight: float = 1e-4
     max_grad_norm: float = 1.0
     gradient_accumulation_steps: int = 1    
     # run_name: str = "{date}_{optim.lr}"  # template

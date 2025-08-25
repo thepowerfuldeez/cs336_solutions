@@ -19,6 +19,7 @@ def parse_args():
     p.add_argument("--tokenizer", default="/home/george/cs336_solutions/assignment1-basics/tokenizer/tinystories")
     p.add_argument("--top-p", default=0.95, type=float)
     p.add_argument("--temperature", default=0.0, type=float)
+    p.add_argument("--max-steps", default=512, type=int)
     p.add_argument("--device", default="cuda:2", type=str)
     return p.parse_args()
 
@@ -35,7 +36,7 @@ def main():
     logger.info(f"EOS {eos_token_id}")
 
     prompt = torch.tensor(tokenizer.encode(args.prompt)).unsqueeze(0).to(trainer.cfg.trainer.device)
-    generated = trainer.generate(prompt, eos_token_id, top_p=args.top_p, temperature=args.temperature, max_steps=512)
+    generated = trainer.generate(prompt, eos_token_id, top_p=args.top_p, temperature=args.temperature, max_steps=args.max_steps)
     logger.info(generated)
 
     logger.info(tokenizer.decode(generated[0].cpu().tolist()))

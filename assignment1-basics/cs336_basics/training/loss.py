@@ -6,7 +6,7 @@ from jaxtyping import Float, Int
 def cross_entropy(logits: Float[Tensor, "... seq vocab_size"], targets: Int[Tensor, "... seq"]) -> Tensor:
     """
     Compute the cross-entropy loss for a sequence of logits and targets.
-    Formula: 
+    Formula:
         loss = -sum(log(p(y_i | x_i))) / n
         where p(y_i | x_i) is the probability of the target y_i given the input x_i,
         and n is the number of tokens in the sequence.
@@ -24,6 +24,8 @@ def cross_entropy(logits: Float[Tensor, "... seq vocab_size"], targets: Int[Tens
     target_logits: Float[Tensor, "... seq"] = logits.gather(dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
     with torch.autocast("cuda", enabled=False):
         # lg: [seq, vocab_size]; m: [bs, seq]
-        logsumexp_values = torch.stack([torch.logsumexp(lg - m[i].unsqueeze(-1), dim=-1) for i, lg in enumerate(logits)])
+        logsumexp_values = torch.stack(
+            [torch.logsumexp(lg - m[i].unsqueeze(-1), dim=-1) for i, lg in enumerate(logits)]
+        )
         loss: Float[Tensor, "... seq"] = m - target_logits + logsumexp_values
-    return loss.mean()
+    return loss.mean(), (logsumexp_values**2).mean()

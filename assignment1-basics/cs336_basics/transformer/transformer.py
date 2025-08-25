@@ -19,15 +19,16 @@ class Block(nn.Module):
         d_ff: int,
         attn_qknorm: bool = False,
         theta: float = 10_000,
+        position: int | None = None,
         device=None,
         dtype=None,
     ):
         super().__init__()
-        self.ln1 = RMSNorm(d_model, device=device, dtype=dtype)
+        self.ln1 = RMSNorm(d_model, position=position, device=device, dtype=dtype)
         self.attn = MultiHeadSelfAttention(
             d_model, n_heads, theta, max_seq_len=_MAX_SEQ_LEN, qknorm=attn_qknorm, device=device, dtype=dtype
         )
-        self.ln2 = RMSNorm(d_model, device=device, dtype=dtype)
+        self.ln2 = RMSNorm(d_model, position=position, device=device, dtype=dtype)
         self.ffn = SwiGLU(d_model, d_ff, device=device, dtype=dtype)
 
     def forward(
@@ -48,6 +49,7 @@ class Transformer(nn.Module):
         n_heads: int,
         d_ff: int,
         attn_qknorm: bool = False,
+        layernorm_scaling: bool = False,
         theta: float = 10_000,
         device=None,
         dtype=None,
@@ -56,7 +58,19 @@ class Transformer(nn.Module):
         super().__init__()
         self.embedding = Embedding(vocab_size, d_model, device, dtype)
         self.blocks = nn.ModuleList(
-            [Block(d_model, n_heads, d_ff, attn_qknorm, theta, device=device, dtype=dtype) for _ in range(n_layers)]
+            [
+                Block(
+                    d_model,
+                    n_heads,
+                    d_ff,
+                    attn_qknorm,
+                    theta,
+                    position=pos if layernorm_scaling else None,
+                    device=device,
+                    dtype=dtype,
+                )
+                for pos in range(1, n_layers + 1)
+            ]
         )
         self.final_norm = RMSNorm(d_model, device=device, dtype=dtype)
         self.lm_head = Linear(d_model, vocab_size, device, dtype)
