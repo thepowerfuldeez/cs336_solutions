@@ -109,7 +109,7 @@ class Trainer:
             # Implement muP scaling, for embedding it's sqrt(d), for out it's 0.5
             for n, p in self.model.named_parameters():
                 if "embedding" in n:
-                    setattr(p, "lr_mul", self.cfg.model.d_model**2)
+                    setattr(p, "lr_mul", self.cfg.model.d_model**0.5)
                 elif "lm_head" in n:
                     setattr(p, "lr_mul", 0.5)
             two_d_params = [
