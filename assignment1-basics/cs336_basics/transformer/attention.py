@@ -51,7 +51,6 @@ class SelfDotProductAttnQKNorm(nn.Module):
         return probs @ v
 
 
-
 # Modification using regular RMSNorm with sqrt(d) scaling
 # class SelfDotProductAttnQKNorm(nn.Module):
 #     def __init__(
@@ -73,7 +72,6 @@ class SelfDotProductAttnQKNorm(nn.Module):
 #             q_norm = self.q_norm(q)
 #             k_norm = self.k_norm(k)
 #             attn_scores = einsum(q_norm, k_norm, "... s1 d_k, ... s2 d_k -> ... s1 s2")
-#             # multiply by learnable parameter
 #             attn_scores *= torch.rsqrt(torch.tensor(q.size(-1)))
 #             if mask is not None:
 #                 attn_scores.masked_fill_(~mask, float("-inf"))
@@ -89,6 +87,7 @@ class MultiHeadSelfAttention(nn.Module):
         theta: float = 10_000,
         max_seq_len: int = 4096,
         qknorm: bool = False,
+        value_residual: bool = False,
         device=None,
         dtype=None,
     ):
@@ -101,9 +100,16 @@ class MultiHeadSelfAttention(nn.Module):
         self.qknorm = qknorm
         if self.qknorm:
             self.sdpa_qknorm = SelfDotProductAttnQKNorm(d_model // n_heads)
+        if value_residual:
+            self.alpha1, self.alpha2 = (
+                nn.Parameter(torch.tensor(0.5, device=device)),
+                nn.Parameter(torch.tensor(0.5, device=device)),
+            )
+        else:
+            self.alpha1, self.alpha2 = 1.0, 0.0
 
     def forward(
-        self, x: Float[Tensor, "b seq d"], token_positions: Int[Tensor, "b seq"] | None = None
+        self, x: Float[Tensor, "b seq d"], token_positions: Int[Tensor, "b seq"] | None = None, v1: Tensor | None = None
     ) -> Float[Tensor, "b seq d"]:
         Q, K, V = self.qkv(x).chunk(3, -1)
         seq_len = Q.size(1)
@@ -115,12 +121,19 @@ class MultiHeadSelfAttention(nn.Module):
             K = self.rope(K, token_positions)
 
         V = rearrange(V, "b seq (h head_d) -> (h b) seq head_d", h=self.n_heads)
+        if v1 is None:
+            V1 = V
+        else:
+            V1 = v1.view_as(V)
+        V = self.alpha1 * V + self.alpha2 * V1
         mask = torch.tril(torch.ones(seq_len, seq_len, device=Q.device, dtype=Q.dtype), diagonal=0).unsqueeze(0).bool()
         if self.qknorm:
             attn: Float[Tensor, "(h b) seq head_d"] = self.sdpa_qknorm(Q, K, V, mask)
         else:
             attn: Float[Tensor, "(h b) seq head_d"] = sdpa(Q, K, V, mask)
-        return self.out(rearrange(attn, "(h b) seq head_d -> b seq (h head_d)", h=self.n_heads))
+        attn_out = self.out(rearrange(attn, "(h b) seq head_d -> b seq (h head_d)", h=self.n_heads))
+        # pass current value vector
+        return attn_out, V
 
 
 if __name__ == "__main__":

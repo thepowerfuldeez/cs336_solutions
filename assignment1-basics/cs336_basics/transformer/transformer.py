@@ -18,6 +18,7 @@ class Block(nn.Module):
         n_heads: int,
         d_ff: int,
         attn_qknorm: bool = False,
+        attn_value_residual: bool = False,
         theta: float = 10_000,
         position: int | None = None,
         device=None,
@@ -26,18 +27,29 @@ class Block(nn.Module):
         super().__init__()
         self.ln1 = RMSNorm(d_model, position=position, device=device, dtype=dtype)
         self.attn = MultiHeadSelfAttention(
-            d_model, n_heads, theta, max_seq_len=_MAX_SEQ_LEN, qknorm=attn_qknorm, device=device, dtype=dtype
+            d_model,
+            n_heads,
+            theta,
+            max_seq_len=_MAX_SEQ_LEN,
+            qknorm=attn_qknorm,
+            value_residual=attn_value_residual,
+            device=device,
+            dtype=dtype,
         )
         self.ln2 = RMSNorm(d_model, position=position, device=device, dtype=dtype)
         self.ffn = SwiGLU(d_model, d_ff, device=device, dtype=dtype)
 
     def forward(
-        self, x: Float[Tensor, "b seq d_model"], token_positions: Int[Tensor, "b seq"] | None = None
+        self,
+        x: Float[Tensor, "b seq d_model"],
+        token_positions: Int[Tensor, "b seq"] | None = None,
+        v1: Tensor | None = None,
     ) -> Float[Tensor, "b seq d_model"]:
         # prenorm_act_norm = x.detach().norm().item()
         prenorm_act_norm = x.detach().pow(2).mean(dim=-1).sqrt().mean()
-        y = x + self.attn(self.ln1(x), token_positions)
-        return y + self.ffn(self.ln2(y)), prenorm_act_norm
+        attn_out, v = self.attn(self.ln1(x), token_positions, v1=v1)
+        y = x + attn_out
+        return y + self.ffn(self.ln2(y)), prenorm_act_norm, v
 
 
 class Transformer(nn.Module):
@@ -49,6 +61,7 @@ class Transformer(nn.Module):
         n_heads: int,
         d_ff: int,
         attn_qknorm: bool = False,
+        attn_value_residual: bool = False,
         layernorm_scaling: bool = False,
         theta: float = 10_000,
         device=None,
@@ -63,8 +76,9 @@ class Transformer(nn.Module):
                     d_model,
                     n_heads,
                     d_ff,
-                    attn_qknorm,
-                    theta,
+                    theta=theta,
+                    attn_qknorm=attn_qknorm,
+                    attn_value_residual=attn_value_residual,
                     position=pos if layernorm_scaling else None,
                     device=device,
                     dtype=dtype,
@@ -81,8 +95,12 @@ class Transformer(nn.Module):
     def forward(self, x: Int[Tensor, "bs seq"]) -> Float[Tensor, "bs seq vocab_size"]:
         x: Float[Tensor, "bs seq d_model"] = self.embedding(x)
         self.prenorm_activation_norms: list[float] = []
+        v1 = None
         for i, layer in enumerate(self.blocks):
-            x, prenorm_act_norm = layer(x)
+            # pass residual value
+            x, prenorm_act_norm, v = layer(x, v1=v1)
+            if v1 is None:
+                v1 = v
             self.prenorm_activation_norms.append(prenorm_act_norm.item())
         x = self.final_norm(x)
         return self.lm_head(x)
