@@ -1,9 +1,9 @@
-apt update
-apt install zstd wget -y
+sudo apt update
+sudo apt install zstd wget python3.12-dev -y
 mkdir -p data_tokenized
-wget https://pub-6fb04c2fe89645edb5eb2f9087d1d27b.r2.dev/owt_valid.npy -P cs336_basics/data_tokenized
-wget https://pub-6fb04c2fe89645edb5eb2f9087d1d27b.r2.dev/owt_train.npy.zstd -P cs336_basics/data_tokenized
-zstd -d cs336_basics/data_tokenized/owt_train.npy.zstd -o cs336_basics/data_tokenized/owt_train.npy
+wget https://pub-6fb04c2fe89645edb5eb2f9087d1d27b.r2.dev/owt_valid.npy -P data_tokenized
+wget https://pub-6fb04c2fe89645edb5eb2f9087d1d27b.r2.dev/owt_train.npy.zstd -P data_tokenized
+zstd -d data_tokenized/owt_train.npy.zstd -o data_tokenized/owt_train.npy
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 . "$HOME/.cargo/env"
 curl -LsSf https://astral.sh/uv/install.sh | sh
