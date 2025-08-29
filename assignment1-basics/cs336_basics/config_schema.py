@@ -40,7 +40,7 @@ class ModelConfig:
     theta: float = 10_000
     weight_tying: bool = False
     attn_qknorm: bool = False
-    attn_value_residual: bool = False
+    attn_val_residual: bool = False
     layernorm_scaling: bool = False
 
 

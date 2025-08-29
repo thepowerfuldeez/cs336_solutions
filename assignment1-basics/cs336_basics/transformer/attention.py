@@ -105,8 +105,9 @@ class MultiHeadSelfAttention(nn.Module):
                 nn.Parameter(torch.tensor(0.5, device=device)),
                 nn.Parameter(torch.tensor(0.5, device=device)),
             )
+            self.scale = nn.Parameter(torch.tensor(1.0, device=device))
         else:
-            self.alpha1, self.alpha2 = 1.0, 0.0
+            self.alpha1, self.alpha2, self.scale = 1.0, 0.0, 1.0
 
     def forward(
         self, x: Float[Tensor, "b seq d"], token_positions: Int[Tensor, "b seq"] | None = None, v1: Tensor | None = None
@@ -125,7 +126,8 @@ class MultiHeadSelfAttention(nn.Module):
             V1 = V
         else:
             V1 = v1.view_as(V)
-        V = self.alpha1 * V + self.alpha2 * V1
+        # value residual learning
+        V = self.scale * (self.alpha1 * V + self.alpha2 * V1) * torch.rsqrt(self.alpha1 ** 2 + self.alpha2 ** 2 + 1e-8)
         mask = torch.tril(torch.ones(seq_len, seq_len, device=Q.device, dtype=Q.dtype), diagonal=0).unsqueeze(0).bool()
         if self.qknorm:
             attn: Float[Tensor, "(h b) seq head_d"] = self.sdpa_qknorm(Q, K, V, mask)

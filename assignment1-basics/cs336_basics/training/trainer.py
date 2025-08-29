@@ -60,9 +60,10 @@ class Trainer:
             self.cfg.model.d_model,
             self.cfg.model.n_heads,
             self.cfg.model.d_ff,
-            self.cfg.model.attn_qknorm,
-            self.cfg.model.layernorm_scaling,
-            self.cfg.model.theta,
+            attn_qknorm=self.cfg.model.attn_qknorm,
+            attn_val_residual=self.cfg.model.attn_val_residual,
+            layernorm_scaling=self.cfg.model.layernorm_scaling,
+            theta=self.cfg.model.theta,
             device=self.cfg.trainer.device,
             # always keep master weights in fp32
             dtype=torch.float32,
@@ -229,7 +230,7 @@ class Trainer:
             for pg in self.optimizers[1].param_groups:
                 # momentum warmup for fixed 300 steps
                 momentum = self.cfg.optim.betas[0]
-                pg["momentum"] = min(max(self.iteration, 1), 300) / 300 * momentum
+                pg["momentum"] = 0.85 + min(max(self.iteration, 1), 300) / 300 * (momentum - 0.85)
 
         for opt in self.optimizers:
             for pg in opt.param_groups:
