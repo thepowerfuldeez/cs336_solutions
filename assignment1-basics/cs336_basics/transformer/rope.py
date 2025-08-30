@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from jaxtyping import Float, Int
-from einops import einsum, rearrange
+from einops import rearrange
 
 from cs336_basics.utils.logger import logger
 
@@ -20,8 +20,10 @@ def get_cos_sin(
     # for i = 1 (second sequence)
     thetas = torch.tensor(theta_base, device=device).unsqueeze(0).repeat(d_k // 2)
     j = torch.arange(0, d_k // 2, device=device)
-    inv_freqs: Float[Tensor, "d_k // 2"] = theta_base ** (-2 * j / d_k)
-    thetas: Float[Tensor, "max_seq_len, d_k // 2"] = torch.outer(torch.arange(max_seq_len, device=device), inv_freqs)
+    inv_freqs: Float[Tensor, d_k // 2] = theta_base ** (-2 * j / d_k)
+    thetas: Float[Tensor, max_seq_len, d_k // 2] = torch.outer(
+        torch.arange(max_seq_len, device=device), inv_freqs
+    )
     return thetas.cos(), thetas.sin()
 
 
@@ -35,7 +37,9 @@ class RotatyPositionalEmbedding(nn.Module):
         logger.info(f"RoPE initialized in {time.monotonic() - t0:.2}s.")
 
     def forward(
-        self, x: Float[Tensor, "... seq_len d_k"], token_positions: Int[Tensor, "... seq_len"] | None = None
+        self,
+        x: Float[Tensor, "... seq_len d_k"],
+        token_positions: Int[Tensor, "... seq_len"] | None = None,
     ) -> Float[Tensor, "... seq_len d_k"]:
         in_dtype = x.dtype
         if token_positions is not None:
@@ -45,7 +49,9 @@ class RotatyPositionalEmbedding(nn.Module):
             cos: Float[Tensor, "seq_len d_k // 2"] = self.cos[: x.size(-2)]
             sin: Float[Tensor, "seq_len d_k // 2"] = self.sin[: x.size(-2)]
 
-        x_pairs = rearrange(x.to(torch.float32), "... seq_len (d_k_half t) -> ... seq_len d_k_half t", t=2)
+        x_pairs = rearrange(
+            x.to(torch.float32), "... seq_len (d_k_half t) -> ... seq_len d_k_half t", t=2
+        )
         x1, x2 = x_pairs[..., 0], x_pairs[..., 1]
 
         row1 = x1 * cos - x2 * sin

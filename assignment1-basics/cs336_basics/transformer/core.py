@@ -2,10 +2,9 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from jaxtyping import Float, Int
-from einops import einsum, rearrange
+from einops import einsum
 
 
-from cs336_basics.utils.logger import logger
 
 
 class Linear(nn.Module):
@@ -22,10 +21,14 @@ class Linear(nn.Module):
         sigma: float = 1.0 / (in_features**0.5)
         nn.init.trunc_normal_(self.weight, std=sigma, a=-3 * sigma, b=3 * sigma)
 
-    def forward(self, x: Float[Tensor, "batch ... in_features"]) -> Float[Tensor, "batch ... out_features"]:
+    def forward(
+        self, x: Float[Tensor, "batch ... in_features"]
+    ) -> Float[Tensor, "batch ... out_features"]:
         # x is row-wise vector
         out: Float[Tensor, "batch ... out_features"] = einsum(
-            x, self.weight, "batch ... in_features, out_features in_features -> batch ... out_features"
+            x,
+            self.weight,
+            "batch ... in_features, out_features in_features -> batch ... out_features",
         )
         return out
 
@@ -36,7 +39,7 @@ class Embedding(nn.Module):
         weight: Tensor = torch.empty(vocab_size, d_model, device=device, dtype=dtype)
         self.weight: Float[Tensor, "vocab_size d_model"] = nn.Parameter(weight)
         # init std per muP
-        sigma = 1 / (d_model ** 0.5)
+        sigma = 1 / (d_model**0.5)
         nn.init.trunc_normal_(self.weight, std=sigma, a=-3 * sigma, b=3 * sigma)
 
     def forward(self, x: Int[Tensor, "batch seq_len"]) -> Float[Tensor, "batch seq_len d_model"]:
@@ -44,7 +47,9 @@ class Embedding(nn.Module):
 
 
 class RMSNorm(nn.Module):
-    def __init__(self, d_model: int, eps: float = 1e-5, position: int | None = None, device=None, dtype=None):
+    def __init__(
+        self, d_model: int, eps: float = 1e-5, position: int | None = None, device=None, dtype=None
+    ):
         """
         LayerNorm scaling - scale by the rsqrt of position
         """
@@ -60,7 +65,9 @@ class RMSNorm(nn.Module):
         in_dtype = x.dtype
         x = x.to(torch.float32)
         with torch.autocast("cuda", enabled=False):
-            reverse_rms: Float[Tensor, "... 1"] = torch.rsqrt((x * x).mean(-1) + self.eps).unsqueeze(-1)
+            reverse_rms: Float[Tensor, "... 1"] = torch.rsqrt(
+                (x * x).mean(-1) + self.eps
+            ).unsqueeze(-1)
             out: Tensor = x * reverse_rms * self.gain
         # apply layernorm scaling
         if self.position is not None:

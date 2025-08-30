@@ -160,7 +160,10 @@ def run_multihead_self_attention(
     """
     mha = MultiHeadSelfAttention(d_model, num_heads)
     mha.load_state_dict(
-        {"qkv.weight": torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], 0), "out.weight": o_proj_weight}
+        {
+            "qkv.weight": torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], 0),
+            "out.weight": o_proj_weight,
+        }
     )
     return mha(in_features)
 
@@ -204,7 +207,10 @@ def run_multihead_self_attention_with_rope(
     """
     mha = MultiHeadSelfAttention(d_model, num_heads, theta=theta, max_seq_len=max_seq_len)
     mha.load_state_dict(
-        {"qkv.weight": torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], 0), "out.weight": o_proj_weight}
+        {
+            "qkv.weight": torch.cat([q_proj_weight, k_proj_weight, v_proj_weight], 0),
+            "out.weight": o_proj_weight,
+        }
     )
     return mha(in_features, token_positions)
 
@@ -314,7 +320,12 @@ def run_transformer_block(
     block.attn.load_state_dict(
         {
             "qkv.weight": torch.cat(
-                [weights["attn.q_proj.weight"], weights["attn.k_proj.weight"], weights["attn.v_proj.weight"]], 0
+                [
+                    weights["attn.q_proj.weight"],
+                    weights["attn.k_proj.weight"],
+                    weights["attn.v_proj.weight"],
+                ],
+                0,
             ),
             "out.weight": weights["attn.output_proj.weight"],
         }

@@ -11,7 +11,11 @@ from cs336_basics.utils.logger import logger
 
 class MemoryMappedDataset:
     def __init__(
-        self, path_or_ds: str | Path | np.ndarray, context_length: int, device: str = "mps", seed: int | None = None
+        self,
+        path_or_ds: str | Path | np.ndarray,
+        context_length: int,
+        device: str = "mps",
+        seed: int | None = None,
     ):
         """
         Reads numpy file in memory mapped mode
@@ -44,27 +48,41 @@ class MemoryMappedDataset:
     def __len__(self):
         return self.total_length - self.context_length
 
-    def get_iterator(self, batch_size: int) -> Iterator[tuple[Int[Tensor, "bs context"], Int[Tensor, "bs context"]]]:
+    def get_iterator(
+        self, batch_size: int
+    ) -> Iterator[tuple[Int[Tensor, "bs context"], Int[Tensor, "bs context"]]]:
         """
         Return an iterator of batches in a sequential order
         Last batch is dropped
         """
-        sequential_indices = torch.arange(start=0, end=len(self), step=batch_size * self.context_length)
+        sequential_indices = torch.arange(
+            start=0, end=len(self), step=batch_size * self.context_length
+        )
         for i_start in sequential_indices:
-            batch_inputs = torch.empty((batch_size, self.context_length), device=self.device, dtype=torch.int32)
-            batch_targets = torch.empty((batch_size, self.context_length), device=self.device, dtype=torch.int32)
+            batch_inputs = torch.empty(
+                (batch_size, self.context_length), device=self.device, dtype=torch.int32
+            )
+            batch_targets = torch.empty(
+                (batch_size, self.context_length), device=self.device, dtype=torch.int32
+            )
             for sample_idx in range(batch_size):
                 inputs, targets = self.__getitem__(i_start.item() + sample_idx)
                 batch_inputs[sample_idx] = inputs
                 batch_targets[sample_idx] = targets
             yield batch_inputs, batch_targets
 
-    def get_batch(self, batch_size: int) -> tuple[Int[Tensor, "bs context"], Int[Tensor, "bs context"]]:
+    def get_batch(
+        self, batch_size: int
+    ) -> tuple[Int[Tensor, "bs context"], Int[Tensor, "bs context"]]:
         """
         Get a batch of data from memory mapped x: np.ndarray
         """
-        batch_inputs = torch.empty((batch_size, self.context_length), device=self.device, dtype=torch.int32)
-        batch_targets = torch.empty((batch_size, self.context_length), device=self.device, dtype=torch.int32)
+        batch_inputs = torch.empty(
+            (batch_size, self.context_length), device=self.device, dtype=torch.int32
+        )
+        batch_targets = torch.empty(
+            (batch_size, self.context_length), device=self.device, dtype=torch.int32
+        )
         # sampler
         sampled_indices = torch.randint(low=0, high=len(self), size=(batch_size,), generator=self.g)
         for sample_idx in range(batch_size):

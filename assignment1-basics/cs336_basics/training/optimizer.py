@@ -6,7 +6,6 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
-from cs336_basics.utils.logger import logger
 
 
 class SGD(torch.optim.Optimizer):
@@ -38,7 +37,9 @@ class AdamW(torch.optim.Optimizer):
         weight_decay: float = 1e-6,
         eps: float = 1e-8,
     ):
-        super().__init__(params=params, defaults=dict(lr=lr, betas=betas, weight_decay=weight_decay, eps=eps))
+        super().__init__(
+            params=params, defaults=dict(lr=lr, betas=betas, weight_decay=weight_decay, eps=eps)
+        )
 
     def step(self, closure: Any | None = None):
         loss = None if closure is None else closure()
@@ -157,7 +158,9 @@ class Muon(torch.optim.Optimizer):
                 # variance preserving multiplier TODO: try on longer runs
                 # var_preserving_multiplier = 0.2 * max(p.size(-2), p.size(-1)) ** 0.5
                 var_preserving_multiplier = 1.0
-                eff_lr = group["lr"] * mup_mult * var_preserving_multiplier * getattr(p, "lr_mul", 1.0)
+                eff_lr = (
+                    group["lr"] * mup_mult * var_preserving_multiplier * getattr(p, "lr_mul", 1.0)
+                )
                 eff_weight_decay = group["lr"] * group["weight_decay"] * getattr(p, "wd_mul", 1.0)
                 state = self.state[p]
 
@@ -174,7 +177,9 @@ class Muon(torch.optim.Optimizer):
                 p.add_(other=v, alpha=-eff_lr)
 
 
-def get_cosine_lr(t: int, lr_max: float, lr_min: float, warmup_steps: int, cosine_steps: int) -> float:
+def get_cosine_lr(
+    t: int, lr_max: float, lr_min: float, warmup_steps: int, cosine_steps: int
+) -> float:
     """
     Update learning rate based on cosine schedule with warmup
 
@@ -189,15 +194,17 @@ def get_cosine_lr(t: int, lr_max: float, lr_min: float, warmup_steps: int, cosin
     if t < warmup_steps:
         return t / warmup_steps * lr_max
     elif warmup_steps <= t < cosine_steps:
-        cos_lr: float = lr_min + 0.5 * (1 + math.cos((t - warmup_steps) / (cosine_steps - warmup_steps) * math.pi)) * (
-            lr_max - lr_min
-        )
+        cos_lr: float = lr_min + 0.5 * (
+            1 + math.cos((t - warmup_steps) / (cosine_steps - warmup_steps) * math.pi)
+        ) * (lr_max - lr_min)
         return cos_lr
     else:
         return lr_min
 
 
-def get_wsd_lr(t: int, lr_max: float, lr_min: float, warmup_steps: int, stable_steps: int, decay_steps: int) -> float:
+def get_wsd_lr(
+    t: int, lr_max: float, lr_min: float, warmup_steps: int, stable_steps: int, decay_steps: int
+) -> float:
     """
     Update learning rate based on Warmup Stable Decay schedule
 
@@ -219,7 +226,9 @@ def get_wsd_lr(t: int, lr_max: float, lr_min: float, warmup_steps: int, stable_s
         return (1 - (t - warmup_steps - stable_steps) / decay_steps) * (lr_max - lr_min)
 
 
-def clip_grad_norm_(params: Iterable[nn.Parameter], max_grad_norm: float = 1.0, eps: float = 1e-6) -> float:
+def clip_grad_norm_(
+    params: Iterable[nn.Parameter], max_grad_norm: float = 1.0, eps: float = 1e-6
+) -> float:
     """
     Clips gradients to `max_grad_norm` in-place
     """

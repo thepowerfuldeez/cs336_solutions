@@ -1,6 +1,5 @@
 """Module with pretokenization utils. Can be executed for speed benchmark"""
 
-
 import time
 import os
 from typing import BinaryIO
@@ -11,7 +10,9 @@ from pathos.multiprocessing import ThreadingPool as Pool
 from fastsplit import Splitter
 
 
-def find_chunk_boundaries(file: BinaryIO, desired_num_chunks: int, split_special_token: bytes) -> list[int]:
+def find_chunk_boundaries(
+    file: BinaryIO, desired_num_chunks: int, split_special_token: bytes
+) -> list[int]:
     """
     Chunk the file into parts that can be counted independently.
     May return fewer chunks if the boundaries end up overlapping.

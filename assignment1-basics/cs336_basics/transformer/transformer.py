@@ -4,7 +4,6 @@ from torch import Tensor
 from jaxtyping import Float, Int
 from tqdm.auto import tqdm
 
-from cs336_basics.utils.logger import logger
 from cs336_basics.transformer.core import SwiGLU, RMSNorm, Embedding, Linear, softmax
 from cs336_basics.transformer.attention import MultiHeadSelfAttention
 
@@ -121,9 +120,11 @@ class Transformer(nn.Module):
             for _ in tqdm(range(max_steps)):
                 logits: Float[Tensor, "bs seq vocab"] = self.forward(input_seq)
                 if temperature == 0:
-                    out: Int[Tensor, "bs"] = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
+                    out: Int[Tensor, bs] = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
                 else:
-                    probs: Float[Tensor, "bs vocab"] = softmax(logits, dim=-1, temperature=temperature)[:, -1, :]
+                    probs: Float[Tensor, "bs vocab"] = softmax(
+                        logits, dim=-1, temperature=temperature
+                    )[:, -1, :]
                     # nucleous sampling
                     if top_p < 1.0:
                         sorted_values, sorted_idx = probs.sort(-1, descending=True)
@@ -133,7 +134,7 @@ class Transformer(nn.Module):
                         for i in range(len(probs)):
                             probs[i].masked_fill_(~orig_mask[i], 0.0)
                             probs[i] /= probs[i].sum(-1)
-                    out: Int[Tensor, "bs"] = torch.multinomial(probs, 1)
+                    out: Int[Tensor, bs] = torch.multinomial(probs, 1)
                 input_seq = torch.cat([input_seq, out], dim=-1)
                 if (out[-1:] == eos_token_id).all(dim=-1).item():
                     break

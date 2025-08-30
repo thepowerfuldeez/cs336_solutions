@@ -3,7 +3,9 @@ from torch import Tensor
 from jaxtyping import Float, Int
 
 
-def cross_entropy(logits: Float[Tensor, "... seq vocab_size"], targets: Int[Tensor, "... seq"]) -> Tensor:
+def cross_entropy(
+    logits: Float[Tensor, "... seq vocab_size"], targets: Int[Tensor, "... seq"]
+) -> Tensor:
     """
     Compute the cross-entropy loss for a sequence of logits and targets.
     Formula:
@@ -21,7 +23,9 @@ def cross_entropy(logits: Float[Tensor, "... seq vocab_size"], targets: Int[Tens
         Tensor of shape (..., seq) containing the cross-entropy loss for each token in the sequence.
     """
     m: Float[Tensor, "... seq"] = logits.max(dim=-1).values
-    target_logits: Float[Tensor, "... seq"] = logits.gather(dim=-1, index=targets.unsqueeze(-1)).squeeze(-1)
+    target_logits: Float[Tensor, "... seq"] = logits.gather(
+        dim=-1, index=targets.unsqueeze(-1)
+    ).squeeze(-1)
     with torch.autocast("cuda", enabled=False):
         # lg: [seq, vocab_size]; m: [bs, seq]
         logsumexp_values = torch.stack(

@@ -52,7 +52,7 @@ class TrainerConfig:
     max_steps: int = 200_000
     z_loss_weight: float = 1e-4
     max_grad_norm: float = 1.0
-    gradient_accumulation_steps: int = 1    
+    gradient_accumulation_steps: int = 1
     # run_name: str = "{date}_{optim.lr}"  # template
     run_name: str = "{date}"  # template
     save_dir: str | Path = Path(__file__).parent / "checkpoints"

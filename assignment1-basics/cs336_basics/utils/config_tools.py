@@ -1,10 +1,16 @@
 import json
-from pathlib import Path
 from dataclasses import asdict, replace
 from typing import Any
 from datetime import datetime
 
-from cs336_basics.config_schema import Config, default_cfg, DataConfig, ModelConfig, TrainerConfig, OptimConfig
+from cs336_basics.config_schema import (
+    Config,
+    default_cfg,
+    DataConfig,
+    ModelConfig,
+    TrainerConfig,
+    OptimConfig,
+)
 
 
 def dataclass_to_nested_dict(dc) -> dict[str, Any]:

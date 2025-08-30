@@ -39,7 +39,11 @@ def train(cfg: Config, args):
     run_name = f"{run_name}_{s}"
     logger.info(f"Training run: {run_name}")
 
-    override = {**override, "data.train_path": args.train_path, "data.validation_path": args.validation_path}
+    override = {
+        **override,
+        "data.train_path": args.train_path,
+        "data.validation_path": args.validation_path,
+    }
 
     cfg = apply_overrides(cfg, override)
     overrides = {"optim.cosine_steps": cfg.trainer.max_steps}

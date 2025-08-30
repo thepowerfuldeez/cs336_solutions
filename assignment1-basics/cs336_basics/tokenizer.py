@@ -3,7 +3,7 @@ import pickle
 import time
 import logging
 from pathlib import Path
-from itertools import chain, count
+from itertools import count
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -133,7 +133,9 @@ class Tokenizer:
             self.bpe_ranks[pair] = rank
 
     @classmethod
-    def from_files(cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None):
+    def from_files(
+        cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None
+    ):
         """Constructs and return a Tokenizer from a serialized vocabulary and list of merges
         (in the same format that your BPE training code output) and (optionally) a list of special
         tokens"""

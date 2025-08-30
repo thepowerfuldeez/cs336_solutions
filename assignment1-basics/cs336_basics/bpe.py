@@ -30,7 +30,9 @@ class BPE:
         self.splitter = Splitter("<|endoftext|>")
         self.split_re = "(" + "|".join([re.escape(tok) for tok in self.special_tokens]) + ")"
 
-        self.vocab: dict[int, bytes] = {256 + i: special_tok for i, special_tok in enumerate(self.special_tokens_bytes)}
+        self.vocab: dict[int, bytes] = {
+            256 + i: special_tok for i, special_tok in enumerate(self.special_tokens_bytes)
+        }
         self.new_id_to_bytes: dict[int, int | bytes] = self.vocab.copy()
         for i in range(256):
             self.vocab[i] = bytes([i])
@@ -117,7 +119,7 @@ class BPE:
         chunk_size_in_bytes = 1024 * 1024 * 32
         n_chunks = math.ceil(file_path.stat().st_size / chunk_size_in_bytes)
         with Path(inp).open("rb") as f:
-            boundaries = find_chunk_boundaries(f, n_chunks, " ".encode())
+            boundaries = find_chunk_boundaries(f, n_chunks, b" ")
             f.seek(0)
             tokens = []
             for start, end in zip(boundaries[:-1], boundaries[1:]):
@@ -175,12 +177,16 @@ class BPE:
         if pair_to_pre_tokens is None:
             # pair -> count
             pair_to_pre_tokens = {}
-            all_counts: dict[tuple[bytes | int], int] = self.update_counts(pre_token_byte_counts, pair_to_pre_tokens)
+            all_counts: dict[tuple[bytes | int], int] = self.update_counts(
+                pre_token_byte_counts, pair_to_pre_tokens
+            )
             all_updated_pairs = set(all_counts.keys())
         else:
             # all_counts, pair_to_pre_tokens, pre_tokens_to_pairs, all_updated_pairs are restored from args
             all_counts = self.update_counts(
-                {k: pre_token_byte_counts[k] for k in updated_keys}, pair_to_pre_tokens, all_counts=all_counts
+                {k: pre_token_byte_counts[k] for k in updated_keys},
+                pair_to_pre_tokens,
+                all_counts=all_counts,
             )
 
         # identify the most frequent pair
@@ -201,7 +207,7 @@ class BPE:
             max_key = self.break_ties(sorted_subset)
         else:
             sorted_all_counts = sorted(all_counts.items(), key=lambda x: x[1], reverse=True)
-            # We keep top10% of current iteration and re-use only that in next iter during sorting 
+            # We keep top10% of current iteration and re-use only that in next iter during sorting
             # This shaves time dramatically
             count_to_keep = math.ceil(len(sorted_all_counts) * 0.10)
             self.second_best_key = sorted_all_counts[:count_to_keep]
@@ -306,7 +312,9 @@ class BPE:
             new_pre_token_byte_counts,
         )
 
-    def merge_key(self, left: int | bytes, right: int | bytes, k: tuple, new_id: int) -> tuple[tuple[bytes], list]:
+    def merge_key(
+        self, left: int | bytes, right: int | bytes, k: tuple, new_id: int
+    ) -> tuple[tuple[bytes], list]:
         """
         Merges a pair of int | bytes into a key and returns a new key
         Example: a1, a2 = (111, 257)
@@ -365,7 +373,11 @@ class BPE:
                 pair_to_pre_tokens_updated,
                 all_updated_pairs_updated,
             ) = self.iter_merge_cached(
-                self.pre_token_byte_counts, updated_keys, all_counts, pair_to_pre_tokens, all_updated_pairs
+                self.pre_token_byte_counts,
+                updated_keys,
+                all_counts,
+                pair_to_pre_tokens,
+                all_updated_pairs,
             )
             self.new_id_to_bytes[new_id] = updated_key
             v = self.convert(new_id)
@@ -384,7 +396,9 @@ class BPE:
             )
             bar.update()
         t2 = time.monotonic()
-        logger.info(f"Finished training in {t2 - t0:.1f} s.\nAverage iter time: {(t1 - t0) / n_iters:.5f} s.")
+        logger.info(
+            f"Finished training in {t2 - t0:.1f} s.\nAverage iter time: {(t1 - t0) / n_iters:.5f} s."
+        )
         logger.info(f"Total sort time was {self.sort_time:.2f} s.")
         return self.vocab, self.merges_tuples
 

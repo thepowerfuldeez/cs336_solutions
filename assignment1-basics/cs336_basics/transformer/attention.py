@@ -5,7 +5,7 @@ from jaxtyping import Float, Int
 
 from einops import einsum, rearrange
 
-from cs336_basics.transformer.core import Linear, softmax, RMSNorm
+from cs336_basics.transformer.core import Linear, softmax
 from cs336_basics.transformer.rope import RotatyPositionalEmbedding
 
 
@@ -94,7 +94,9 @@ class MultiHeadSelfAttention(nn.Module):
         super().__init__()
         assert d_model % n_heads == 0, "Hidden dim must be divisible by n_heads"
         self.n_heads = n_heads
-        self.rope = RotatyPositionalEmbedding(theta, d_k=d_model // n_heads, max_seq_len=max_seq_len, device=device)
+        self.rope = RotatyPositionalEmbedding(
+            theta, d_k=d_model // n_heads, max_seq_len=max_seq_len, device=device
+        )
         self.qkv = Linear(d_model, d_model * 3, device=device, dtype=dtype)
         self.out = Linear(d_model, d_model, device=device, dtype=dtype)
         self.qknorm = qknorm
@@ -110,7 +112,10 @@ class MultiHeadSelfAttention(nn.Module):
             self.alpha1, self.alpha2, self.scale = 1.0, 0.0, 1.0
 
     def forward(
-        self, x: Float[Tensor, "b seq d"], token_positions: Int[Tensor, "b seq"] | None = None, v1: Tensor | None = None
+        self,
+        x: Float[Tensor, "b seq d"],
+        token_positions: Int[Tensor, "b seq"] | None = None,
+        v1: Tensor | None = None,
     ) -> Float[Tensor, "b seq d"]:
         Q, K, V = self.qkv(x).chunk(3, -1)
         seq_len = Q.size(1)
@@ -127,8 +132,16 @@ class MultiHeadSelfAttention(nn.Module):
         else:
             V1 = v1.view_as(V)
         # value residual learning
-        V = self.scale * (self.alpha1 * V + self.alpha2 * V1) * torch.rsqrt(self.alpha1 ** 2 + self.alpha2 ** 2 + 1e-8)
-        mask = torch.tril(torch.ones(seq_len, seq_len, device=Q.device, dtype=Q.dtype), diagonal=0).unsqueeze(0).bool()
+        V = (
+            self.scale
+            * (self.alpha1 * V + self.alpha2 * V1)
+            * torch.rsqrt(self.alpha1**2 + self.alpha2**2 + 1e-8)
+        )
+        mask = (
+            torch.tril(torch.ones(seq_len, seq_len, device=Q.device, dtype=Q.dtype), diagonal=0)
+            .unsqueeze(0)
+            .bool()
+        )
         if self.qknorm:
             attn: Float[Tensor, "(h b) seq head_d"] = self.sdpa_qknorm(Q, K, V, mask)
         else:

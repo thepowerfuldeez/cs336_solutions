@@ -8,7 +8,13 @@ from cs336_basics.config_schema import Config
 from cs336_basics.utils.config_tools import save_config
 
 
-def save_checkpoint(fpath: Path, cfg: Config | None, model: nn.Module, optimizers: list[Optimizer], iteration: int = 0):
+def save_checkpoint(
+    fpath: Path,
+    cfg: Config | None,
+    model: nn.Module,
+    optimizers: list[Optimizer],
+    iteration: int = 0,
+):
     torch.save(
         {
             "config": save_config(cfg) if cfg is not None else None,
@@ -20,7 +26,9 @@ def save_checkpoint(fpath: Path, cfg: Config | None, model: nn.Module, optimizer
     )
 
 
-def load_checkpoint(fpath: Path, model: nn.Module, optimizers: list[Optimizer] | None, device: str) -> int:
+def load_checkpoint(
+    fpath: Path, model: nn.Module, optimizers: list[Optimizer] | None, device: str
+) -> int:
     checkpoint = torch.load(fpath, map_location="cpu")
     model.load_state_dict(checkpoint["model"])
     if optimizers is not None:

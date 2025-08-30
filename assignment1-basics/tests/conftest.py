@@ -62,7 +62,9 @@ class NumpySnapshot:
         if self.always_match_exact:
             rtol = atol = 0
         if test_name is DEFAULT:
-            assert self.default_test_name is not None, "Test name must be provided or set as default"
+            assert self.default_test_name is not None, (
+                "Test name must be provided or set as default"
+            )
             test_name = self.default_test_name
 
         snapshot_path = self._get_snapshot_path(test_name)
@@ -130,7 +132,9 @@ class Snapshot:
         if force_update is DEFAULT:
             force_update = self.default_force_update
         if test_name is DEFAULT:
-            assert self.default_test_name is not None, "Test name must be provided or set as default"
+            assert self.default_test_name is not None, (
+                "Test name must be provided or set as default"
+            )
             test_name = self.default_test_name
 
         snapshot_path = self._get_snapshot_path(test_name)
@@ -163,7 +167,9 @@ def snapshot(request):
     force_update = False
 
     # Create the snapshot handler with default settings
-    snapshot_handler = Snapshot(default_force_update=force_update, default_test_name=request.node.name)
+    snapshot_handler = Snapshot(
+        default_force_update=force_update, default_test_name=request.node.name
+    )
 
     return snapshot_handler
 
@@ -185,7 +191,9 @@ def numpy_snapshot(request):
 
     # Create the snapshot handler with default settings
     snapshot = NumpySnapshot(
-        default_force_update=force_update, always_match_exact=match_exact, default_test_name=request.node.name
+        default_force_update=force_update,
+        always_match_exact=match_exact,
+        default_test_name=request.node.name,
     )
 
     return snapshot

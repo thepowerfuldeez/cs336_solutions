@@ -22,7 +22,7 @@ from cs336_basics.training import (
 )
 from cs336_basics.config_schema import Config
 from cs336_basics.utils.logger import logger
-from cs336_basics.utils.config_tools import load_config, save_config, apply_overrides
+from cs336_basics.utils.config_tools import load_config, apply_overrides
 
 torch.set_float32_matmul_precision("high")
 
@@ -105,7 +105,9 @@ class Trainer:
     def _init_optimizers(self):
         if self.cfg.optim.use_muon:
             one_d_params = [
-                p for n, p in self.model.named_parameters() if p.ndim < 2 or "embedding" in n or "lm_head" in n
+                p
+                for n, p in self.model.named_parameters()
+                if p.ndim < 2 or "embedding" in n or "lm_head" in n
             ]
             # Implement muP scaling, for embedding it's sqrt(d), for out it's 0.5
             for n, p in self.model.named_parameters():
@@ -154,11 +156,19 @@ class Trainer:
 
     def load_state(self, path: Path):
         logger.info(f"Loading state from {str(path)}")
-        self.iteration = load_checkpoint(path, self.model, self.optimizers, device=self.cfg.trainer.device)
+        self.iteration = load_checkpoint(
+            path, self.model, self.optimizers, device=self.cfg.trainer.device
+        )
 
     def save_state(self):
         logger.info(f"Saving training state at iter={self.iteration}")
-        save_checkpoint(self.save_dir / f"{self.iteration}.pt", self.cfg, self.model, self.optimizers, self.iteration)
+        save_checkpoint(
+            self.save_dir / f"{self.iteration}.pt",
+            self.cfg,
+            self.model,
+            self.optimizers,
+            self.iteration,
+        )
 
     def log(self, **data):
         for k, v in data.items():
@@ -177,17 +187,25 @@ class Trainer:
         """
         Perform decoding with nucleous sampling and temperature
         """
-        return self.model.generate(prompt, eos_token_id, top_p=top_p, temperature=temperature, max_steps=max_steps)
+        return self.model.generate(
+            prompt, eos_token_id, top_p=top_p, temperature=temperature, max_steps=max_steps
+        )
 
     def validate(self):
         mem("before validation")
         self.model.eval()
         val_iters = 0
-        val_loss_epoch = torch.zeros((), device=self.model.embedding.weight.data.device, dtype=torch.float32)
-        with torch.inference_mode(), torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"):
+        val_loss_epoch = torch.zeros(
+            (), device=self.model.embedding.weight.data.device, dtype=torch.float32
+        )
+        with (
+            torch.inference_mode(),
+            torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"),
+        ):
             for inputs, targets in tqdm(
                 self.val_dataset.get_iterator(self.cfg.data.val_batch_size),
-                total=len(self.val_dataset) // (self.cfg.data.val_batch_size * self.cfg.data.context_length),
+                total=len(self.val_dataset)
+                // (self.cfg.data.val_batch_size * self.cfg.data.context_length),
                 desc="Running validation",
             ):
                 logits = self.model(inputs)
@@ -277,7 +295,9 @@ class Trainer:
             grad_norm = 0.0
 
         parameter_norms = {
-            k: p.data.detach().norm().item() for k, p in self.model.named_parameters() if "attn" in k or "ffn" in k
+            k: p.data.detach().norm().item()
+            for k, p in self.model.named_parameters()
+            if "attn" in k or "ffn" in k
         }
         return {
             "train_loss": train_loss * self.cfg.trainer.gradient_accumulation_steps,
@@ -304,7 +324,10 @@ class Trainer:
             t1 = time.monotonic()
             if self.iteration % self.cfg.trainer.log_every == 0:
                 logger.info(f"Train iteration {self.iteration}")
-                prenorm_log = {f"log/block{i}_prenorm": v for i, v in enumerate(step_stats["prenorm_activation_norms"])}
+                prenorm_log = {
+                    f"log/block{i}_prenorm": v
+                    for i, v in enumerate(step_stats["prenorm_activation_norms"])
+                }
                 pnorm_log = {f"log/{k}_norm": v for k, v in step_stats["parameter_norms"].items()}
                 self.log(
                     **{
