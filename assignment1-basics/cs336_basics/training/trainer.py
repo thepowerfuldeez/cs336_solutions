@@ -172,7 +172,8 @@ class Trainer:
 
     def log(self, **data):
         for k, v in data.items():
-            logger.info(f"{k}: {v}")
+            if "log" not in k:
+                logger.info(f"{k}: {v}")
         if self.wandb is not None:
             self.wandb.log(data)
 
@@ -187,25 +188,20 @@ class Trainer:
         """
         Perform decoding with nucleous sampling and temperature
         """
-        return self.model.generate(
-            prompt, eos_token_id, top_p=top_p, temperature=temperature, max_steps=max_steps
-        )
+        return self.model.generate(prompt, eos_token_id, top_p=top_p, temperature=temperature, max_steps=max_steps)
 
     def validate(self):
         mem("before validation")
         self.model.eval()
         val_iters = 0
-        val_loss_epoch = torch.zeros(
-            (), device=self.model.embedding.weight.data.device, dtype=torch.float32
-        )
+        val_loss_epoch = torch.zeros((), device=self.model.embedding.weight.data.device, dtype=torch.float32)
         with (
             torch.inference_mode(),
             torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"),
         ):
             for inputs, targets in tqdm(
                 self.val_dataset.get_iterator(self.cfg.data.val_batch_size),
-                total=len(self.val_dataset)
-                // (self.cfg.data.val_batch_size * self.cfg.data.context_length),
+                total=len(self.val_dataset) // (self.cfg.data.val_batch_size * self.cfg.data.context_length),
                 desc="Running validation",
             ):
                 logits = self.model(inputs)
@@ -262,14 +258,11 @@ class Trainer:
         z_loss_weight = self.cfg.trainer.z_loss_weight
 
         with torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"):
-            logits = self.model(inputs)
-            prenorm_activation_norms = self.model.prenorm_activation_norms
+            logits, prenorm_activation_norms = self.model(inputs)
             loss, z_loss = cross_entropy(logits, targets)
         if self.cfg.trainer.gradient_accumulation_steps > 1:
             loss /= self.cfg.trainer.gradient_accumulation_steps
             z_loss /= self.cfg.trainer.gradient_accumulation_steps
-
-        train_loss = loss.item()
 
         if self.cfg.trainer.dtype == "bfloat16":
             self.scaler.scale(loss + z_loss_weight * z_loss).backward()
@@ -292,21 +285,32 @@ class Trainer:
             for opt in self.optimizers:
                 opt.zero_grad(set_to_none=True)
         else:
-            grad_norm = 0.0
+            grad_norm = torch.tensor(0.0)
 
         parameter_norms = {
-            k: p.data.detach().norm().item()
-            for k, p in self.model.named_parameters()
-            if "attn" in k or "ffn" in k
+            k: p.data.detach().norm() for k, p in self.model.named_parameters() if "attn" in k or "ffn" in k
         }
+        train_loss = loss.detach()
+        z_loss = z_loss.detach()
         return {
             "train_loss": train_loss * self.cfg.trainer.gradient_accumulation_steps,
-            "z_loss": z_loss.item() * self.cfg.trainer.gradient_accumulation_steps,
+            "z_loss": z_loss * self.cfg.trainer.gradient_accumulation_steps,
             "grad_norm": grad_norm,
             "lr": iter_lr,
             "update_ratio": update_ratio,
             "prenorm_activation_norms": prenorm_activation_norms,
             "parameter_norms": parameter_norms,
+        }
+
+    def postprocess_step_stats(self, step_stats):
+        return {
+            "train_loss": step_stats["train_loss"].item(),
+            "z_loss": step_stats["z_loss"].item(),
+            "grad_norm": step_stats["grad_norm"].item(),
+            "lr": step_stats["lr"],
+            "update_ratio": step_stats["update_ratio"],
+            "prenorm_activation_norms": step_stats["prenorm_activation_norms"].cpu().tolist(),
+            "parameter_norms": {k: v.item() for k, v in step_stats["parameter_norms"].items()},
         }
 
     def train(self):
@@ -324,10 +328,9 @@ class Trainer:
             t1 = time.monotonic()
             if self.iteration % self.cfg.trainer.log_every == 0:
                 logger.info(f"Train iteration {self.iteration}")
-                prenorm_log = {
-                    f"log/block{i}_prenorm": v
-                    for i, v in enumerate(step_stats["prenorm_activation_norms"])
-                }
+                # call item and introduce sync
+                step_stats = self.postprocess_step_stats(step_stats)
+                prenorm_log = {f"log/block{i}_prenorm": v for i, v in enumerate(step_stats["prenorm_activation_norms"])}
                 pnorm_log = {f"log/{k}_norm": v for k, v in step_stats["parameter_norms"].items()}
                 self.log(
                     **{

@@ -228,7 +228,7 @@ def get_wsd_lr(
 
 def clip_grad_norm_(
     params: Iterable[nn.Parameter], max_grad_norm: float = 1.0, eps: float = 1e-6
-) -> float:
+) -> Tensor:
     """
     Clips gradients to `max_grad_norm` in-place
     """
@@ -243,7 +243,7 @@ def clip_grad_norm_(
             for p in params:
                 if p.grad is not None:
                     p.grad.mul_(max_grad_norm / (norm + eps))
-    return norm.item()
+    return norm
 
 
 if __name__ == "__main__":

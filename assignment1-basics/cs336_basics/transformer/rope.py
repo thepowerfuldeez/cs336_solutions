@@ -34,7 +34,7 @@ class RotatyPositionalEmbedding(nn.Module):
         cos, sin = get_cos_sin(max_seq_len, theta, d_k, device)
         self.register_buffer("cos", cos, persistent=False)
         self.register_buffer("sin", sin, persistent=False)
-        logger.info(f"RoPE initialized in {time.monotonic() - t0:.2}s.")
+        # logger.info(f"RoPE initialized in {time.monotonic() - t0:.2}s.")
 
     def forward(
         self,

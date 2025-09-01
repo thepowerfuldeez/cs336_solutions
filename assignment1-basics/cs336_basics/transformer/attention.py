@@ -41,7 +41,7 @@ class SelfDotProductAttnQKNorm(nn.Module):
     ) -> Float[Tensor, "... seq_len d_k"]:
         with torch.autocast("cuda", enabled=False):
             q_norm = q / torch.linalg.norm(q, dim=-1, keepdim=True)
-            k_norm = k / torch.linalg.norm(q, dim=-1, keepdim=True)
+            k_norm = k / torch.linalg.norm(k, dim=-1, keepdim=True)
             attn_scores = einsum(q_norm, k_norm, "... s1 d_k, ... s2 d_k -> ... s1 s2")
             # multiply by learnable parameter
             attn_scores *= self.gain
@@ -94,9 +94,7 @@ class MultiHeadSelfAttention(nn.Module):
         super().__init__()
         assert d_model % n_heads == 0, "Hidden dim must be divisible by n_heads"
         self.n_heads = n_heads
-        self.rope = RotatyPositionalEmbedding(
-            theta, d_k=d_model // n_heads, max_seq_len=max_seq_len, device=device
-        )
+        self.rope = RotatyPositionalEmbedding(theta, d_k=d_model // n_heads, max_seq_len=max_seq_len, device=device)
         self.qkv = Linear(d_model, d_model * 3, device=device, dtype=dtype)
         self.out = Linear(d_model, d_model, device=device, dtype=dtype)
         self.qknorm = qknorm
@@ -109,7 +107,11 @@ class MultiHeadSelfAttention(nn.Module):
             )
             self.scale = nn.Parameter(torch.tensor(1.0, device=device))
         else:
-            self.alpha1, self.alpha2, self.scale = 1.0, 0.0, 1.0
+            self.alpha1, self.alpha2, self.scale = (
+                torch.tensor(1.0, device=device),
+                torch.tensor(0.0, device=device),
+                torch.tensor(1.0, device=device),
+            )
 
     def forward(
         self,
@@ -132,16 +134,8 @@ class MultiHeadSelfAttention(nn.Module):
         else:
             V1 = v1.view_as(V)
         # value residual learning
-        V = (
-            self.scale
-            * (self.alpha1 * V + self.alpha2 * V1)
-            * torch.rsqrt(self.alpha1**2 + self.alpha2**2 + 1e-8)
-        )
-        mask = (
-            torch.tril(torch.ones(seq_len, seq_len, device=Q.device, dtype=Q.dtype), diagonal=0)
-            .unsqueeze(0)
-            .bool()
-        )
+        V = self.scale * (self.alpha1 * V + self.alpha2 * V1) * torch.rsqrt(self.alpha1**2 + self.alpha2**2 + 1e-8)
+        mask = torch.tril(torch.ones(seq_len, seq_len, device=Q.device, dtype=Q.dtype), diagonal=0).unsqueeze(0).bool()
         if self.qknorm:
             attn: Float[Tensor, "(h b) seq head_d"] = self.sdpa_qknorm(Q, K, V, mask)
         else:

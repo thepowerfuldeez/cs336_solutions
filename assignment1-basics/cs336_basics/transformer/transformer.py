@@ -89,20 +89,21 @@ class Transformer(nn.Module):
         self.lm_head = Linear(d_model, vocab_size, device, dtype)
         if weight_tying:
             self.lm_head.weight = self.embedding.weight
-        self.prenorm_activation_norms: list[float] = []
 
     def forward(self, x: Int[Tensor, "bs seq"]) -> Float[Tensor, "bs seq vocab_size"]:
         x: Float[Tensor, "bs seq d_model"] = self.embedding(x)
-        self.prenorm_activation_norms: list[float] = []
+        prenorm_activation_norms: Float[Tensor, "n_layers"] = torch.zeros(
+            (len(self.blocks),), dtype=x.dtype, device=x.device
+        )
         v1 = None
         for i, layer in enumerate(self.blocks):
             # pass residual value
             x, prenorm_act_norm, v = layer(x, v1=v1)
             if v1 is None:
                 v1 = v
-            self.prenorm_activation_norms.append(prenorm_act_norm.item())
+            prenorm_activation_norms[i] = prenorm_act_norm
         x = self.final_norm(x)
-        return self.lm_head(x)
+        return self.lm_head(x), prenorm_activation_norms
 
     def generate(
         self,
@@ -120,11 +121,9 @@ class Transformer(nn.Module):
             for _ in tqdm(range(max_steps)):
                 logits: Float[Tensor, "bs seq vocab"] = self.forward(input_seq)
                 if temperature == 0:
-                    out: Int[Tensor, bs] = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
+                    out: Int[Tensor, "bs"] = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
                 else:
-                    probs: Float[Tensor, "bs vocab"] = softmax(
-                        logits, dim=-1, temperature=temperature
-                    )[:, -1, :]
+                    probs: Float[Tensor, "bs vocab"] = softmax(logits, dim=-1, temperature=temperature)[:, -1, :]
                     # nucleous sampling
                     if top_p < 1.0:
                         sorted_values, sorted_idx = probs.sort(-1, descending=True)
@@ -134,7 +133,7 @@ class Transformer(nn.Module):
                         for i in range(len(probs)):
                             probs[i].masked_fill_(~orig_mask[i], 0.0)
                             probs[i] /= probs[i].sum(-1)
-                    out: Int[Tensor, bs] = torch.multinomial(probs, 1)
+                    out: Int[Tensor, "bs"] = torch.multinomial(probs, 1)
                 input_seq = torch.cat([input_seq, out], dim=-1)
                 if (out[-1:] == eos_token_id).all(dim=-1).item():
                     break
