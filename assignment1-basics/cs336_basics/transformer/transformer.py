@@ -44,9 +44,8 @@ class Block(nn.Module):
         token_positions: Int[Tensor, "b seq"] | None = None,
         v1: Tensor | None = None,
     ) -> Float[Tensor, "b seq d_model"]:
-        # prenorm_act_norm = x.detach().norm().item()
-        prenorm_act_norm = x.detach().pow(2).mean(dim=-1).sqrt().mean()
         attn_out, v = self.attn(self.ln1(x), token_positions, v1=v1)
+        prenorm_act_norm = x.detach().pow(2).mean(dim=-1).sqrt().mean()
         y = x + attn_out
         return y + self.ffn(self.ln2(y)), prenorm_act_norm, v
 
