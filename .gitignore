@@ -1,5 +1,6 @@
 **/__pycache__
 **/.DS_Store
+node_modules/
 **/fastsplit/target
 *.egg-info*
 **/data_tokenized
