@@ -204,7 +204,7 @@ class Trainer:
                 total=len(self.val_dataset) // (self.cfg.data.val_batch_size * self.cfg.data.context_length),
                 desc="Running validation",
             ):
-                logits = self.model(inputs)
+                logits, _ = self.model(inputs)
                 val_loss, _ = cross_entropy(logits, targets)
                 val_loss_epoch += val_loss.to(torch.float32)
                 val_iters += 1
