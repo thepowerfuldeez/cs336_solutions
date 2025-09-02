@@ -200,14 +200,14 @@ class Trainer:
         self.model.eval()
         val_iters = 0
         val_loss_epoch = torch.zeros((), device=self.model.embedding.weight.data.device, dtype=torch.float32)
-        with (
-            torch.inference_mode(),
-            torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"),
+        for inputs, targets in tqdm(
+            self.val_dataset.get_iterator(self.cfg.data.val_batch_size),
+            total=len(self.val_dataset) // (self.cfg.data.val_batch_size * self.cfg.data.context_length),
+            desc="Running validation",
         ):
-            for inputs, targets in tqdm(
-                self.val_dataset.get_iterator(self.cfg.data.val_batch_size),
-                total=len(self.val_dataset) // (self.cfg.data.val_batch_size * self.cfg.data.context_length),
-                desc="Running validation",
+            with (
+                torch.inference_mode(),
+                torch.autocast("cuda", enabled=self.cfg.trainer.dtype == "bfloat16"),
             ):
                 logits, _ = self.model(inputs)
                 val_loss, _ = cross_entropy(logits, targets)
