@@ -21,6 +21,7 @@ class OptimConfig:
     lr_min: float = 1e-6
     scheduler: str = "cosine"  # or "wsd"
     use_muon: bool = False
+    use_lion: bool = False
     # if None then use lr / wd
     muon_lr: float | None = None
     muon_wd: float | None = None

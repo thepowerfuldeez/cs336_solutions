@@ -15,6 +15,7 @@ from cs336_basics.training import (
     MemoryMappedDataset,
     AdamW,
     Muon,
+    Lion,
     get_cosine_lr,
     get_wsd_lr,
     clip_grad_norm_,
@@ -105,9 +106,7 @@ class Trainer:
     def _init_optimizers(self):
         if self.cfg.optim.use_muon:
             one_d_params = [
-                p
-                for n, p in self.model.named_parameters()
-                if p.ndim < 2 or "embedding" in n or "lm_head" in n
+                p for n, p in self.model.named_parameters() if p.ndim < 2 or "embedding" in n or "lm_head" in n
             ]
             # Implement muP scaling, for embedding it's sqrt(d), for out it's 0.5
             for n, p in self.model.named_parameters():
@@ -120,12 +119,20 @@ class Trainer:
                 for n, p in self.model.named_parameters()
                 if p.ndim >= 2 and "embedding" not in n and "lm_head" not in n
             ]
-            self.optimizer1 = AdamW(
-                one_d_params,
-                lr=self.cfg.optim.lr,
-                betas=self.cfg.optim.betas,
-                weight_decay=self.cfg.optim.wd,
-            )
+            if self.cfg.optim.use_lion:
+                self.optimizer1 = Lion(
+                    one_d_params,
+                    lr=self.cfg.optim.lr,
+                    betas=self.cfg.optim.betas,
+                    weight_decay=self.cfg.optim.wd,
+                )
+            else:
+                self.optimizer1 = AdamW(
+                    one_d_params,
+                    lr=self.cfg.optim.lr,
+                    betas=self.cfg.optim.betas,
+                    weight_decay=self.cfg.optim.wd,
+                )
             if self.cfg.optim.muon_lr is None:
                 muon_lr = self.cfg.optim.lr
             else:
@@ -156,9 +163,7 @@ class Trainer:
 
     def load_state(self, path: Path):
         logger.info(f"Loading state from {str(path)}")
-        self.iteration = load_checkpoint(
-            path, self.model, self.optimizers, device=self.cfg.trainer.device
-        )
+        self.iteration = load_checkpoint(path, self.model, self.optimizers, device=self.cfg.trainer.device)
 
     def save_state(self):
         logger.info(f"Saving training state at iter={self.iteration}")
