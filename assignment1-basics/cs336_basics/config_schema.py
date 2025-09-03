@@ -18,13 +18,14 @@ class OptimConfig:
     lr: float = 7e-3
     wd: float = 1e-7
     betas: tuple[float, float] = (0.9, 0.99)
-    lr_min: float = 1e-6
+    lr_min_coeff: float = 1e-2
     scheduler: str = "cosine"  # or "wsd"
     use_muon: bool = False
     use_lion: bool = False
     # if None then use lr / wd
     muon_lr: float | None = None
     muon_wd: float | None = None
+    muon_wd_min: float | None = None
     warmup_steps: int = 1000
     cosine_steps: int = 10_000
     stable_steps: int = 10_000

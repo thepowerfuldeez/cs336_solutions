@@ -70,7 +70,15 @@ class Trainer:
             dtype=torch.float32,
             weight_tying=self.cfg.model.weight_tying,
         )
-        logger.info("Created a model")
+        layer_params = (
+            4 * self.cfg.model.d_model**2
+            + 2 * self.cfg.model.d_model
+            + 2 * self.cfg.model.d_model * self.cfg.model.d_ff
+        )
+        total_params = self.cfg.model.n_layers * layer_params + self.cfg.model.d_model * self.cfg.model.vocab_size
+        logger.info(
+            f"Created a model with {layer_params / 1e6:.2f}M layer and {total_params / 1e6:.1f}M total non-emb params"
+        )
         self.model.to(self.cfg.trainer.device)
         self.model.compile()
         if load_components == "all":
@@ -220,40 +228,55 @@ class Trainer:
             "val_perplexity": math.exp(val_loss_epoch),
         }
 
-    def _set_lr(self):
-        """
-        Sets learning rate according to the learning rate schedule
-        """
+    def _get_lr(self, lr, lr_min):
         if self.cfg.optim.scheduler == "cosine":
             iter_lr = get_cosine_lr(
                 self.iteration,
-                self.cfg.optim.lr,
-                self.cfg.optim.lr_min,
+                lr,
+                lr_min,
                 self.cfg.optim.warmup_steps,
                 self.cfg.optim.cosine_steps,
             )
         elif self.cfg.optim.scheduler == "wsd":
             iter_lr = get_wsd_lr(
                 self.iteration,
-                self.cfg.optim.lr,
-                self.cfg.optim.lr_min,
+                lr,
+                lr_min,
                 self.cfg.optim.warmup_steps,
                 self.cfg.optim.stable_steps,
                 self.cfg.optim.decay_steps,
             )
         else:
             raise ValueError("unrecognized optim scheduler")
+        return iter_lr
+
+    def _set_lr(self):
+        """
+        Sets learning rate according to the learning rate schedule
+
+        Works for both optimizers in a separate fashion, so AdamW receives smaller lr
+        + support wd decay for Muon
+        """
+        iter_lr = self._get_lr(self.cfg.optim.lr, self.cfg.optim.lr * self.cfg.optim.lr_min_coeff)
+        for pg in self.optimizers[0].param_groups:
+            pg["lr"] = iter_lr
 
         if self.cfg.optim.use_muon:
             # second optimizer is muon
+            iter_lr = self._get_lr(self.cfg.optim.muon_lr, self.cfg.optim.muon_lr * self.cfg.optim.lr_min_coeff)
+            if self.cfg.optim.muon_wd_min is not None:
+                iter_wd = self._get_lr(self.cfg.optim.muon_wd, self.cfg.optim.muon_wd_min)
+            else:
+                iter_wd = None
+
             for pg in self.optimizers[1].param_groups:
                 # momentum warmup for fixed 300 steps
                 momentum = self.cfg.optim.betas[0]
                 pg["momentum"] = 0.85 + min(max(self.iteration, 1), 300) / 300 * (momentum - 0.85)
-
-        for opt in self.optimizers:
-            for pg in opt.param_groups:
                 pg["lr"] = iter_lr
+                if iter_wd is not None:
+                    pg["wd"] = iter_wd
+            return iter_lr
         return iter_lr
 
     def train_step(self, inputs, targets):
