@@ -3,6 +3,7 @@ import os
 import math
 import pickle
 import time
+from argparse import ArgumentParser
 from pathlib import Path
 from collections import defaultdict
 
@@ -19,7 +20,7 @@ PAT = re.compile(PAT)
 
 
 class BPE:
-    def __init__(self, special_tokens: list[str], vocab_size: int = 355):
+    def __init__(self, special_tokens: list[str], vocab_size: int = 355, save_every: int = 10000, save_dir: str = "."):
         self.vocab_size: int = vocab_size
 
         self.merges: list[tuple[bytes | int, bytes | int]] = []
@@ -30,15 +31,18 @@ class BPE:
         self.splitter = Splitter("<|endoftext|>")
         self.split_re = "(" + "|".join([re.escape(tok) for tok in self.special_tokens]) + ")"
 
-        self.vocab: dict[int, bytes] = {
-            256 + i: special_tok for i, special_tok in enumerate(self.special_tokens_bytes)
-        }
+        self.vocab: dict[int, bytes] = {256 + i: special_tok for i, special_tok in enumerate(self.special_tokens_bytes)}
         self.new_id_to_bytes: dict[int, int | bytes] = self.vocab.copy()
         for i in range(256):
             self.vocab[i] = bytes([i])
 
         self.sort_time = 0
         self.second_best_key = None
+
+        self.save_dir = Path(save_dir)
+        self.save_dir.mkdir(exist_ok=True, parents=True)
+        self.save_every = save_every
+        self.vocab_name, self.merges_name = "vocab.pickle", "merges.pickle"
 
     @property
     def cur_vocab_size(self):
@@ -177,9 +181,7 @@ class BPE:
         if pair_to_pre_tokens is None:
             # pair -> count
             pair_to_pre_tokens = {}
-            all_counts: dict[tuple[bytes | int], int] = self.update_counts(
-                pre_token_byte_counts, pair_to_pre_tokens
-            )
+            all_counts: dict[tuple[bytes | int], int] = self.update_counts(pre_token_byte_counts, pair_to_pre_tokens)
             all_updated_pairs = set(all_counts.keys())
         else:
             # all_counts, pair_to_pre_tokens, pre_tokens_to_pairs, all_updated_pairs are restored from args
@@ -312,9 +314,7 @@ class BPE:
             new_pre_token_byte_counts,
         )
 
-    def merge_key(
-        self, left: int | bytes, right: int | bytes, k: tuple, new_id: int
-    ) -> tuple[tuple[bytes], list]:
+    def merge_key(self, left: int | bytes, right: int | bytes, k: tuple, new_id: int) -> tuple[tuple[bytes], list]:
         """
         Merges a pair of int | bytes into a key and returns a new key
         Example: a1, a2 = (111, 257)
@@ -346,6 +346,8 @@ class BPE:
         self.pre_token_byte_counts: dict[tuple[bytes], int] = {
             tuple(k.encode()): v for k, v in pre_token_counts.items()
         }
+        # TODO: if we are resuming, now pre token byte counts becomes already tokenized **documents** hashed as dict.
+        # It is also helpful to remove duplicates or near duplicates that way, since we assume document is unique
 
         n_iters = max(0, self.vocab_size - self.cur_vocab_size)
         logger.info(f"Using {n_iters=}")
@@ -394,34 +396,53 @@ class BPE:
                 pair_to_pre_tokens_updated,
                 all_updated_pairs_updated,
             )
+
+            if i % self.save_every == 0:
+                self.save(iter=i)
+                logger.info(f"Saved intermediate tokenizer at iter {i}")
             bar.update()
         t2 = time.monotonic()
-        logger.info(
-            f"Finished training in {t2 - t0:.1f} s.\nAverage iter time: {(t1 - t0) / n_iters:.5f} s."
-        )
+        logger.info(f"Finished training in {t2 - t0:.1f} s.\nAverage iter time: {(t1 - t0) / n_iters:.5f} s.")
         logger.info(f"Total sort time was {self.sort_time:.2f} s.")
         return self.vocab, self.merges_tuples
 
-    def save(self, vocab_path: str, merges_path: str):
-        Path(vocab_path).write_bytes(pickle.dumps(self.vocab))
-        Path(merges_path).write_bytes(pickle.dumps(self.merges_tuples))
+    def save(self, iter: int | None = None):
+        if iter:
+            vocab_path, merges_path = (
+                self.save_dir / f"{iter}_{self.vocab_name}",
+                self.save_dir / f"{iter}_{self.merges_name}",
+            )
+        else:
+            vocab_path, merges_path = self.save_dir / self.vocab_name, self.save_dir / self.merges_name
+        vocab_path.write_bytes(pickle.dumps(self.vocab))
+        merges_path.write_bytes(pickle.dumps(self.merges_tuples))
 
 
-if __name__ == "__main__":
-    filepath = "data/owt_train.txt"
+def parse_args():
+    p = ArgumentParser()
+    p.add_argument("--data-path", default="data/owt_train.txt")
     # filepath = "data/TinyStoriesV2-GPT4-train.txt"
     # filepath = "data/TinyStoriesV2-GPT4-mid3.txt"
     # filepath = "data/TinyStoriesV2-GPT4-valid.txt"
     # filepath = "cs336_basics/test.txt"
     # filepath = "tests/fixtures/tinystories_sample_5M.txt"
-    bpe = BPE(["<|endoftext|>"], vocab_size=32000)
+    p.add_argument("--vocab-size", type=int, default=32000)
+    p.add_argument("--num-processes", type=int, default=8)
+    p.add_argument("--save-every", type=int, default=10000)
+    p.add_argument("--save-dir", default=".")
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    bpe = BPE(["<|endoftext|>"], vocab_size=args.vocab_size, save_every=args.save_every, save_dir=args.save_dir)
     # bpe = BPE(["<|endoftext|>"], vocab_size=10000)
     # bpe = BPE(["<|endoftext|>"], vocab_size=1000)
-    vocab, merges = bpe.train(filepath, num_processes=8)
+    vocab, merges = bpe.train(args.data_path, num_processes=args.num_processes)
 
-    logger.info([bpe.decode(x) for x in list(vocab)[256:356]])
-    toks = bpe.encode("newest is a newest")
-    logger.info(toks)
-    logger.info([bpe.decode(tok) for tok in toks])
+    # logger.info([bpe.decode(x) for x in list(vocab)[256:356]])
+    # toks = bpe.encode("newest is a newest")
+    # logger.info(toks)
+    # logger.info([bpe.decode(tok) for tok in toks])
 
-    bpe.save("vocab_owt.pickle", "merges_owt.pickle")
+    bpe.save()
