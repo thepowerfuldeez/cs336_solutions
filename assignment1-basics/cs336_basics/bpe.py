@@ -3,11 +3,13 @@ import os
 import math
 import pickle
 import time
+import random
 from argparse import ArgumentParser
 from pathlib import Path
 from collections import defaultdict
 
 import regex as re
+import numpy as np
 from tqdm.auto import tqdm
 
 from cs336_basics.pretokenization import Splitter, pre_tokenize, find_chunk_boundaries
@@ -137,7 +139,7 @@ class BPE:
         pre_token_byte_counts: dict[tuple, int],
         pair_to_pre_tokens: dict[tuple, set] | None,
         all_counts: dict | None = None,
-    ):
+    ) -> dict[tuple[bytes], int]:
         """
         Update counts of all_counts by v with each pair of k
         Also update pair_to_pre_tokens if passed
@@ -185,7 +187,7 @@ class BPE:
             all_updated_pairs = set(all_counts.keys())
         else:
             # all_counts, pair_to_pre_tokens, pre_tokens_to_pairs, all_updated_pairs are restored from args
-            all_counts = self.update_counts(
+            all_counts: dict[tuple[bytes], int] = self.update_counts(
                 {k: pre_token_byte_counts[k] for k in updated_keys},
                 pair_to_pre_tokens,
                 all_counts=all_counts,
@@ -206,14 +208,14 @@ class BPE:
                 reverse=True,
             )
             self.second_best_key = sorted_subset
-            max_key = self.break_ties(sorted_subset)
+            max_key: tuple[bytes] = self.break_ties(sorted_subset)
         else:
             sorted_all_counts = sorted(all_counts.items(), key=lambda x: x[1], reverse=True)
             # We keep top10% of current iteration and re-use only that in next iter during sorting
             # This shaves time dramatically
             count_to_keep = math.ceil(len(sorted_all_counts) * 0.10)
             self.second_best_key = sorted_all_counts[:count_to_keep]
-            max_key = self.break_ties(sorted_all_counts)
+            max_key: tuple[bytes] = self.break_ties(sorted_all_counts)
 
         tx1 = time.monotonic()
         self.sort_time += tx1 - tx
@@ -381,10 +383,171 @@ class BPE:
                 pair_to_pre_tokens,
                 all_updated_pairs,
             )
+            # updated key is tuple[bytes] (left, right), represented as int
             self.new_id_to_bytes[new_id] = updated_key
             v = self.convert(new_id)
             self.merges.append(updated_key)
             converted = (self.convert(updated_key[0]), self.convert(updated_key[1]))
+            # logger.info(f"merges at step {i}: {converted}")
+
+            # merges tuples is now tuple of bytestrings
+            self.merges_tuples.append(converted)
+            self.vocab[new_id] = v
+            # logger.info(f"iter: {i}, updated new id mapping with {new_id=}, {v=}")
+
+            updated_keys, all_counts, pair_to_pre_tokens, all_updated_pairs = (
+                new_updated_keys,
+                all_counts_updated,
+                pair_to_pre_tokens_updated,
+                all_updated_pairs_updated,
+            )
+
+            if i % self.save_every == 0:
+                self.save(iter=i)
+                logger.info(f"Saved intermediate tokenizer at iter {i}")
+            bar.update()
+        t2 = time.monotonic()
+        logger.info(f"Finished training in {t2 - t0:.1f} s.\nAverage iter time: {(t1 - t0) / n_iters:.5f} s.")
+        logger.info(f"Total sort time was {self.sort_time:.2f} s.")
+        return self.vocab, self.merges_tuples
+
+    def pre_tokenize_resume(self, filepath: str, vocab, superbpe: bool = True):
+        assert Path(filepath).suffix == ".npy", "Resuming supported only from .npy files!"
+        out_arr = np.load(filepath, mmap_mode="r")
+        pre_token_counts = {}
+        document_boundaries = (out_arr == 256).nonzero()[0]
+
+        # Prepare word boundaries either from using tokens with whitespace, or by custom rules in SuperBPE
+        if superbpe:
+
+            def process_diffs(diffs, word_boundaries):
+                to_add = []
+                for i, d in enumerate(diffs):
+                    if d >= 20:
+                        n_additions = min(d // 10, 11)
+                        # corresponds to i, i+1 in word_boundaries
+                        left = word_boundaries[i]
+                        to_add.extend([left + 10 * i for i in range(1, n_additions + 1)])
+                return np.array(to_add)
+
+            # document + EOS tokens
+            whitespace_tokens = np.array([i for i, v in vocab.items() if b":" in v] + [256])
+
+            punctuation_tokens = np.array([i for i, v in vocab.items() if b":" in v or b"." in v or b"," in v])
+            pre_punctuation_boundaries = np.isin(out_arr, punctuation_tokens).nonzero()[0] - 1
+
+            word_boundaries = np.isin(out_arr, whitespace_tokens).nonzero()[0]
+
+            # filter out pre punctuation boundaries that are covered by word boundaries
+            pre_punctuation_boundaries = pre_punctuation_boundaries[
+                ~np.isin(pre_punctuation_boundaries, word_boundaries)
+            ]
+            word_boundaries = np.concatenate((word_boundaries, pre_punctuation_boundaries))
+            word_boundaries.sort(kind="mergesort")
+
+            # filter by length
+            diffs = word_boundaries[1:] - word_boundaries[:-1]
+            max_length = int(np.percentile(diffs, 99))
+
+            diff_boundaries_to_add = process_diffs(diffs, word_boundaries)
+            diff_boundaries_to_add = diff_boundaries_to_add[~np.isin(diff_boundaries_to_add, word_boundaries)]
+            word_boundaries = np.concatenate((word_boundaries, diff_boundaries_to_add))
+            word_boundaries.sort(kind="mergesort")
+        else:
+            # document + EOS tokens
+            whitespace_tokens = np.array([i for i, v in vocab.items() if v.startswith(b" ")] + [256])
+            word_boundaries = np.isin(out_arr, whitespace_tokens).nonzero()[0]
+        # which indices are actually EOS boundaries across all boundaries?
+        document_boundaries_indices = np.isin(word_boundaries, document_boundaries).nonzero()[0]
+        assert len(document_boundaries_indices) == len(document_boundaries)
+
+        # when splitting by words we need to keep track of the document pointer, in which case
+        # we should skip EOS token from adding as a key
+        doc_boundary_ptr = 0
+        pre_token_counts = {}
+        should_change_left = False
+        for i, right in tqdm(enumerate(word_boundaries), total=len(word_boundaries)):
+            if i == 0:
+                left = 0
+            else:
+                if i == document_boundaries_indices[doc_boundary_ptr]:
+                    # we should skip EOS at the next iteration
+                    should_change_left = True
+                    doc_boundary_ptr += 1
+            # we really don't need 1 token keys anymore
+            # For SuperBPE: just take 10% of data due to OOM
+            if right - left > 1 and (random.random() < 0.1 if superbpe else True):
+                if superbpe:
+                    length = right - left
+                    # truncate by length
+                    delta_length = max(0, length - max_length)
+                    k = tuple(out_arr[left : right - delta_length].tolist())
+                else:
+                    k = tuple(out_arr[left:right].tolist())
+                if k not in pre_token_counts:
+                    pre_token_counts[k] = 1
+                else:
+                    pre_token_counts[k] += 1
+            if should_change_left:
+                left = right + 1
+                should_change_left = False
+            else:
+                left = right
+        assert all(256 not in k for k in pre_token_counts)
+        return pre_token_counts
+
+    def resume_train(
+        self, filepath: str, new_vocab_size: int, vocab_path: str, merges_path: str, superbpe: bool = True
+    ):
+        """
+        In this method, we are expecting already tokenized npy file for train
+        """
+        logger.info("Starting to train BPE")
+        t0 = time.monotonic()
+
+        self.vocab = pickle.loads(Path(vocab_path).read_bytes())
+        bytes2new_id = {v: k for k, v in self.vocab.items()}
+
+        self.merges_tuples = pickle.loads(Path(merges_path).read_bytes())
+        # left, right
+        self.merges = [(bytes2new_id[a], bytes2new_id[b]) for a, b in self.merges_tuples]
+
+        self.new_id_to_bytes: dict[int, int | bytes] = {257 + i: v for i, v in enumerate(self.merges)}
+
+        iter = len(self.vocab)
+        logger.info(f"Resuming from {iter=}")
+        self.vocab_size = new_vocab_size
+        assert new_vocab_size > iter, "new vocab size must be greater than current vocab size!"
+
+        self.pre_token_byte_counts = self.pre_tokenize_resume(filepath, self.vocab, superbpe=superbpe)
+        # TODO: if we are resuming, now pre token byte counts becomes already tokenized **documents** hashed as dict.
+        # It is also helpful to remove duplicates or near duplicates that way, since we assume document is unique
+
+        n_iters = self.vocab_size - self.cur_vocab_size
+        logger.info(f"Using {n_iters=}")
+
+        # cached, more efficient version
+        updated_keys, all_counts, pair_to_pre_tokens, all_updated_pairs = None, None, None, None
+        bar = tqdm(total=n_iters, desc="Training BPE")
+        for i in range(n_iters):
+            (
+                (updated_key, new_id),
+                self.pre_token_byte_counts,
+                new_updated_keys,
+                all_counts_updated,
+                pair_to_pre_tokens_updated,
+                all_updated_pairs_updated,
+            ) = self.iter_merge_cached(
+                self.pre_token_byte_counts,
+                updated_keys,
+                all_counts,
+                pair_to_pre_tokens,
+                all_updated_pairs,
+            )
+            self.new_id_to_bytes[new_id] = updated_key
+            v = self.convert(new_id)
+            self.merges.append(updated_key)
+            converted: tuple[bytes, bytes] = (self.convert(updated_key[0]), self.convert(updated_key[1]))
             # logger.info(f"merges at step {i}: {converted}")
             self.merges_tuples.append(converted)
             self.vocab[new_id] = v
@@ -430,6 +593,9 @@ def parse_args():
     p.add_argument("--num-processes", type=int, default=8)
     p.add_argument("--save-every", type=int, default=10000)
     p.add_argument("--save-dir", default=".")
+    p.add_argument("--resume-from-vocab", default="")
+    p.add_argument("--resume-from-merges", default="")
+    p.add_argument("--superbpe", type=int, default=1)
     return p.parse_args()
 
 
@@ -438,7 +604,17 @@ if __name__ == "__main__":
     bpe = BPE(["<|endoftext|>"], vocab_size=args.vocab_size, save_every=args.save_every, save_dir=args.save_dir)
     # bpe = BPE(["<|endoftext|>"], vocab_size=10000)
     # bpe = BPE(["<|endoftext|>"], vocab_size=1000)
-    vocab, merges = bpe.train(args.data_path, num_processes=args.num_processes)
+
+    if args.resume_from_vocab and args.resume_from_merges:
+        vocab, merges = bpe.resume_train(
+            args.data_path,
+            new_vocab_size=args.vocab_size,
+            vocab_path=args.resume_from_vocab,
+            merges_path=args.resume_from_merges,
+            superbpe=args.superbpe == 1,
+        )
+    else:
+        vocab, merges = bpe.train(args.data_path, num_processes=args.num_processes)
 
     # logger.info([bpe.decode(x) for x in list(vocab)[256:356]])
     # toks = bpe.encode("newest is a newest")

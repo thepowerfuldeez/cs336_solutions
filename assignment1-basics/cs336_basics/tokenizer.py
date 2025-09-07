@@ -2,11 +2,15 @@ import math
 import pickle
 import time
 import logging
+import json
+import heapq
+from argparse import ArgumentParser
 from pathlib import Path
 from itertools import count
 from dataclasses import dataclass
 from functools import lru_cache
 
+import numpy as np
 import regex as re
 from tqdm.auto import tqdm
 
@@ -92,9 +96,6 @@ logger = logging.getLogger(__name__)
 #             res.extend(key)
 #     return index, res
 
-import numpy as np
-import heapq
-
 
 class Tokenizer:
     def __init__(self, vocab, merges, special_tokens=None):
@@ -145,7 +146,7 @@ class Tokenizer:
             special_tokens=special_tokens,
         )
 
-    @lru_cache(maxsize=100_000)
+    @lru_cache(maxsize=10_000_000)
     def _encode_bytes_cached(self, tok_bytes: bytes) -> tuple[int]:
         key = [self.lut256[b] for b in tok_bytes]
         return tuple(self._heap_merge(key))
@@ -265,59 +266,56 @@ class Tokenizer:
         return b.decode("utf-8", errors="replace")
 
 
+def parse_args():
+    p = ArgumentParser()
+    p.add_argument("--vocab-path")
+    p.add_argument("--merges-path")
+    p.add_argument("--data-path", default="/mnt/harddrive/datasets/bigcode_the_stack_v2_updated_smol/")
+    p.add_argument("--tokenized-data-path", default="/mnt/harddrive/datasets/bigcode_the_stack_v2_updated_smol/tokenized_54770")
+    p.add_argument("--stats-name", default="54770_stats.json")
+    p.add_argument("--include-val-data", default=0, type=int)
+    return p.parse_args()
+
+
 if __name__ == "__main__":
+    args = parse_args()
     tok = Tokenizer.from_files(
-        "/Users/george/Projects/learning/assignment1-basics/vocab.pickle",
-        "/Users/george/Projects/learning/assignment1-basics/merges.pickle",
+        args.vocab_path,
+        args.merges_path,
         special_tokens=["<|endoftext|>"],
     )
-    input_dir = Path("/Users/george/Projects/learning/assignment1-basics/data/")
+    input_dir = Path(args.data_path)
 
-    # toks = tok.encode("newest")
-    # print(toks, tok.decode(toks))
+    compression_ratios = {}
+    for f in input_dir.glob("*_val.txt"):
+        # sample 100 docs from each dataset
+        ratios = []
+        for doc in re.split(tok.split_re, f.read_text())[:200]:
+            if doc != "<|endoftext|>" and doc:
+                n_bytes = len(doc.encode())
+                # print(doc)
+                toks = tok.encode(doc)
+                # print(toks)
+                n_tokens = len(toks)
+                ratio = n_bytes / n_tokens
+                ratios.append(ratio)
+        avg_ratio = np.mean(ratios)
+        print(f"{f.name} compression ratio: {avg_ratio:.2f}")
+        compression_ratios[f.name] = avg_ratio
+    (input_dir / args.stats_name).write_text(json.dumps(compression_ratios))
 
-    # toks = tok.encode("s")
-    # print(toks, tok.decode(toks))
-
-    # print(max(list(tok.vocab.items()), key=lambda x: len(x[1])))
-
-    # # sample 10 docs from tinystories
-    # ratios = []
-    # for doc in re.split(tok.split_re, (input_dir / "TinyStoriesV2-GPT4-valid.txt").read_text())[:20]:
-    #     if doc != "<|endoftext|>":
-    #         n_bytes = len(doc.encode())
-    #         print(doc)
-    #         toks = tok.encode(doc)
-    #         print(toks)
-    #         n_tokens = len(toks)
-    #         ratio = n_bytes / n_tokens
-    #         print(f"compression ratio: {ratio}")
-    #         ratios.append(ratio)
-
-    # import numpy as np
-    # print(np.mean(ratios))
-
-    tokenized_path = Path("data_tokenized")
+    tokenized_path = Path(args.tokenized_data_path)
     tokenized_path.mkdir(exist_ok=True, parents=True)
 
-    # for fname in ["TinyStoriesV2-GPT4-valid.txt", "TinyStoriesV2-GPT4-train.txt"]:
-    #     t0 = time.monotonic()
-    #     tokens = tok.encode_file(input_dir / fname, chunk_size=8 * 1024 * 1024)
-    #     taken = time.monotonic() - t0
-    #     logger.info(f"Took {taken:.1f} s.")
-    #     logger.info(f"Throughput: {22 / taken:.2f} MB/s")
-    #     np.save(str((tokenized_path / fname).with_suffix(".npy")), np.array(tokens, dtype="uint16"))
-
-    tok = Tokenizer.from_files(
-        "/Users/george/Projects/learning/assignment1-basics/vocab_owt.pickle",
-        "/Users/george/Projects/learning/assignment1-basics/merges_owt.pickle",
-        special_tokens=["<|endoftext|>"],
-    )
-    for fname in ["owt_valid.txt", "owt_train.txt"]:
+    fpaths = list(input_dir.glob("*_train.txt"))
+    if args.include_val_data == 1:
+        fpaths.extend(list(input_dir.glob("*_val.txt")))
+    for fpath in fpaths:
         t0 = time.monotonic()
-        fpath = input_dir / fname
         tokens = tok.encode_file(fpath, chunk_size=8 * 1024 * 1024)
         taken = time.monotonic() - t0
+        logger.info(f"Processed {str(fpath)}")
         logger.info(f"Took {taken:.1f} s.")
         logger.info(f"Throughput: {fpath.stat().st_size / (1024 * 1024) / taken:.2f} MB/s")
+        fname = fpath.name
         np.save(str((tokenized_path / fname).with_suffix(".npy")), np.array(tokens, dtype="uint16"))

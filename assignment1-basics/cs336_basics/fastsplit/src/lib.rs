@@ -10,6 +10,9 @@ static SLOW_RE: Lazy<FRegex> = Lazy::new(|| {
     FRegex::new(r#"\'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"#).unwrap()
 });
 
+// TODO: add digits grouping regexp
+// (?=(\d{3})+(?!\d))
+
 
 /// Ignore invalid UTF-8 bytes (drop them rather than replacing with U+FFFD).
 fn decode_utf8_ignore(bytes: &[u8]) -> String {
