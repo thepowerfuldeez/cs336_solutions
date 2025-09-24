@@ -98,7 +98,7 @@ logger = logging.getLogger(__name__)
 
 
 class Tokenizer:
-    def __init__(self, vocab, merges, special_tokens=None):
+    def __init__(self, vocab, merges, special_tokens=None, superbpe_transition_idx: int | None = None):
         # Special tokens and split regex
         self.special_tokens = special_tokens or []
         # Vocabulary and reverse map
@@ -115,10 +115,19 @@ class Tokenizer:
         escaped = [re.escape(tok) for tok in sorted(self.special_tokens, reverse=True)]
         base_tok = "<|endoftext|>"
         self.split_re = f"({'|'.join(escaped)})" if escaped else f"({re.escape(base_tok)})"
+        # idx when we start encoding differently
+        self.superbpe_transition_idx = superbpe_transition_idx
+        if superbpe_transition_idx is not None:
+            merges_superbpe = merges[superbpe_transition_idx:]
+            self.merge_map_superbpe, self.bpe_ranks_superbpe = self._init_merge_map(merges_superbpe)
+            merges = merges[:superbpe_transition_idx]
 
+        self.merge_map, self.bpe_ranks = self._init_merge_map(merges)
+
+    def _init_merge_map(self, merges):
         # Build merge_map: (left_id, right_id) -> new_id
-        self.merge_map: dict[tuple[int, int], int] = {}
-        self.bpe_ranks: dict[tuple[int, int], int] = {}
+        merge_map: dict[tuple[int, int], int] = {}
+        bpe_ranks: dict[tuple[int, int], int] = {}
         for rank, (left_bytes, right_bytes) in enumerate(merges):
             # IDs for left and right tokens
             left_id = self.byte2int[left_bytes]
@@ -130,12 +139,17 @@ class Tokenizer:
                 # fallback: map concatenation not in vocab
                 continue
             pair = (left_id, right_id)
-            self.merge_map[pair] = new_id
-            self.bpe_ranks[pair] = rank
+            merge_map[pair] = new_id
+            bpe_ranks[pair] = rank
+        return merge_map, bpe_ranks
 
     @classmethod
     def from_files(
-        cls, vocab_filepath: str, merges_filepath: str, special_tokens: list[str] | None = None
+        cls,
+        vocab_filepath: str,
+        merges_filepath: str,
+        special_tokens: list[str] | None = None,
+        superbpe_transition_idx: int | None = None,
     ):
         """Constructs and return a Tokenizer from a serialized vocabulary and list of merges
         (in the same format that your BPE training code output) and (optionally) a list of special
@@ -144,6 +158,7 @@ class Tokenizer:
             vocab=pickle.loads(Path(vocab_filepath).read_bytes()),
             merges=pickle.loads(Path(merges_filepath).read_bytes()),
             special_tokens=special_tokens,
+            superbpe_transition_idx=superbpe_transition_idx,
         )
 
     @lru_cache(maxsize=10_000_000)
@@ -151,7 +166,7 @@ class Tokenizer:
         key = [self.lut256[b] for b in tok_bytes]
         return tuple(self._heap_merge(key))
 
-    def _heap_merge(self, key: list[int | bytes]) -> list[int]:
+    def _heap_merge(self, key: list[int | bytes], bpe_ranks=None, merge_map=None) -> list[int]:
         """
         1. Build a double linked list from input sequence
             Each node has value, version, next and prev
@@ -162,8 +177,13 @@ class Tokenizer:
             Relink left node to a new neighbor (left.next.next)
         4. Add 2 neighbors after merge back to the heap
         """
+        if bpe_ranks is None:
+            bpe_ranks = self.bpe_ranks
+        if merge_map is None:
+            merge_map = self.merge_map
+
         tokens = [Token(v) for v in key]
-        heap = MinHeap(bpe_ranks=self.bpe_ranks)
+        heap = MinHeap(bpe_ranks=bpe_ranks)
 
         for i in range(len(tokens) - 1):
             tokens[i].next = tokens[i + 1]
@@ -185,14 +205,14 @@ class Tokenizer:
                 # logger.info("no right node")
                 continue
             pair = (left.value, right.value)
-            if pair not in self.bpe_ranks:
+            if pair not in bpe_ranks:
                 # logger.info("incorrect pair")
                 continue
-            if self.bpe_ranks[pair] != rank_at_push:
-                # logger.info(f"incorrect rank: {self.bpe_ranks[pair]=} {rank_at_push=}")
+            if bpe_ranks[pair] != rank_at_push:
+                # logger.info(f"incorrect rank: {bpe_ranks[pair]=} {rank_at_push=}")
                 continue
 
-            new_id = self.merge_map[pair]
+            new_id = merge_map[pair]
             left.value = new_id
             left.version += 1
             # logger.info(f"{pair} -> {new_id}")
@@ -235,6 +255,8 @@ class Tokenizer:
                 tok_bytes = tok.group().encode("utf-8")
                 key = self._encode_bytes_cached(tok_bytes)
                 out.extend(key)
+            if self.superbpe_transition_idx is not None:
+                out = self._heap_merge(out, bpe_ranks=self.bpe_ranks_superbpe, merge_map=self.merge_map_superbpe)
         return out
 
     def encode_iterable(self, iterable):
@@ -271,8 +293,11 @@ def parse_args():
     p.add_argument("--vocab-path")
     p.add_argument("--merges-path")
     p.add_argument("--data-path", default="/mnt/harddrive/datasets/bigcode_the_stack_v2_updated_smol/")
-    p.add_argument("--tokenized-data-path", default="/mnt/harddrive/datasets/bigcode_the_stack_v2_updated_smol/tokenized_54770")
-    p.add_argument("--stats-name", default="54770_stats.json")
+    p.add_argument(
+        "--tokenized-data-path", default="/mnt/harddrive/datasets/bigcode_the_stack_v2_updated_smol/tokenized_54770"
+    )
+    p.add_argument("--superbpe-transition-idx", default=54770, type=int)
+    p.add_argument("--stats-name", default="64446_stats.json")
     p.add_argument("--include-val-data", default=0, type=int)
     return p.parse_args()
 
@@ -282,6 +307,7 @@ if __name__ == "__main__":
     tok = Tokenizer.from_files(
         args.vocab_path,
         args.merges_path,
+        superbpe_transition_idx=args.superbpe_transition_idx,
         special_tokens=["<|endoftext|>"],
     )
     input_dir = Path(args.data_path)
@@ -307,9 +333,9 @@ if __name__ == "__main__":
     tokenized_path = Path(args.tokenized_data_path)
     tokenized_path.mkdir(exist_ok=True, parents=True)
 
-    fpaths = list(input_dir.glob("*_train.txt"))
+    fpaths = list(input_dir.glob("*train.txt"))
     if args.include_val_data == 1:
-        fpaths.extend(list(input_dir.glob("*_val.txt")))
+        fpaths.extend(list(input_dir.glob("*val.txt")))
     for fpath in fpaths:
         t0 = time.monotonic()
         tokens = tok.encode_file(fpath, chunk_size=8 * 1024 * 1024)
